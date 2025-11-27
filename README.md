@@ -27,6 +27,9 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 # Install dependencies and the package in development mode
 ./venv/bin/pip install -e .
+
+# Symlink the program in working directory for convenience
+ln -s ./venv/bin/rag-cli
 ```
 
 ## Configuration
