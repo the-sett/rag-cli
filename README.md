@@ -18,7 +18,7 @@ A command-line tool for building and querying a knowledge base using OpenAI's ve
 
 ```bash
 # Clone the repository
-git clone https://github.com/rupertlssmith/rag-cli
+git clone https://github.com/the-sett/rag-cli.git
 cd rag-cli
 
 # Create and activate a virtual environment
