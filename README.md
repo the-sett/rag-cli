@@ -1,6 +1,6 @@
-# RAG CLI
+# crag - Chat with your RAG
 
-A command-line tool for building and querying a knowledge base using OpenAI's vector store and file search capabilities. RAG CLI lets you index your documents, code, and data files, then have natural conversations with an AI that can search and retrieve relevant information from your indexed content.
+A command-line tool for building and querying a knowledge base using OpenAI's vector store and file search capabilities. crag lets you index your documents, code, and data files, then have natural conversations with an AI that can search and retrieve relevant information from your indexed content.
 
 **Key features:**
 - Index documents, code, and data files with a single command
@@ -11,32 +11,64 @@ A command-line tool for building and querying a knowledge base using OpenAI's ve
 
 ## Prerequisites
 
-- Python 3.10 or higher
+### Build Dependencies
+
+- CMake 3.20 or higher
+- Clang compiler with C++17 support
+- Ninja build system
+- lld linker
+
+### Runtime Dependencies
+
+- libcurl4
 - An OpenAI API key with access to the Responses API
 
-## Installation
+### Installing Dependencies (Debian/Ubuntu)
+
+```bash
+# Build dependencies
+sudo apt install cmake ninja-build clang lld
+
+# Runtime and development libraries
+sudo apt install libcurl4-openssl-dev nlohmann-json3-dev libcli11-dev
+```
+
+## Building from Source
 
 ```bash
 # Clone the repository
 git clone https://github.com/the-sett/rag-cli.git
 cd rag-cli
 
-# Create and activate a virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Configure with CMake preset
+cmake --preset ninja-clang-lld-linux
 
-# Install dependencies and the package in development mode
-./venv/bin/pip install -e .
+# Build
+cmake --build --preset build
+```
 
-# Symlink the program in working directory for convenience
-ln -s ./venv/bin/rag-cli
+The executable will be at `build/crag`.
+
+## Building a Debian Package
+
+After building, create a `.deb` package:
+
+```bash
+cd build
+cpack
+```
+
+This generates `crag_<version>_amd64.deb` which can be installed with:
+
+```bash
+sudo dpkg -i crag_0.1.0_amd64.deb
 ```
 
 ## Configuration
 
 ### OpenAI API Key
 
-RAG CLI requires an OpenAI API key. Set it as an environment variable:
+crag requires an OpenAI API key. Set it as an environment variable:
 
 ```bash
 export OPEN_AI_API_KEY="sk-your-api-key-here"
@@ -53,13 +85,22 @@ You can obtain an API key from [OpenAI's platform](https://platform.openai.com/a
 
 ### Settings File
 
-On first run, RAG CLI creates a `settings.json` file in the current directory containing:
-- `model` - Selected OpenAI model
-- `reasoning_effort` - Thinking level (low/medium/high)
-- `vector_store_id` - OpenAI vector store ID
-- `file_patterns` - Indexed file patterns
+crag stores its configuration in a `.crag.json` file in the current working directory. This file is created automatically on first run and contains:
 
-This file is gitignored by default as it contains API-specific IDs.
+- `model` - The selected OpenAI model
+- `reasoning_effort` - Thinking level (low/medium/high)
+- `vector_store_id` - OpenAI vector store ID for your indexed files
+- `file_patterns` - The file patterns that were indexed
+
+On subsequent runs in the same directory, crag reads this file to restore your previous session's settings. This means:
+
+- You don't need to re-select the model or thinking level each time
+- Your indexed files remain available without re-uploading
+- You can simply run `crag` to continue chatting with your knowledge base
+
+To start fresh or index different files, use the `--reindex` flag or delete the `.crag.json` file.
+
+This file should be added to `.gitignore` as it contains API-specific IDs.
 
 ## Usage
 
@@ -69,29 +110,29 @@ On first run, provide files or glob patterns to index:
 
 ```bash
 # Index specific files
-rag-cli README.md docs/guide.md
+crag README.md docs/guide.md
 
 # Index with glob patterns
-rag-cli 'docs/*.md'
+crag 'docs/*.md'
 
 # Index recursively
-rag-cli 'docs/**/*.md'
+crag 'docs/**/*.md'
 
 # Index multiple patterns
-rag-cli 'docs/**/*.md' 'src/**/*.py' '*.txt'
+crag 'docs/**/*.md' 'src/**/*.py' '*.txt'
 
 # Index a directory (all supported files)
-rag-cli knowledge/
+crag knowledge/
 ```
 
-You'll be prompted to select a model and reasoning effort level.
+You'll be prompted to select a model and reasoning effort level. These choices are saved to `.crag.json`.
 
 ### Interactive Chat
 
 Once indexed, run without arguments to start chatting:
 
 ```bash
-rag-cli
+crag
 ```
 
 Type your questions and the AI will search your indexed files for relevant context. Type `quit` or `exit` to end the session.
@@ -101,15 +142,17 @@ Type your questions and the AI will search your indexed files for relevant conte
 To update your knowledge base with new or changed files:
 
 ```bash
-rag-cli --reindex 'docs/**/*.md'
+crag --reindex 'docs/**/*.md'
 ```
+
+This creates a new vector store and prompts you to select model and thinking level again.
 
 ### Non-interactive Mode
 
 For scripting and automation, use non-interactive mode:
 
 ```bash
-echo "What is garbage collection?" | rag-cli -n
+echo "What is garbage collection?" | crag -n
 ```
 
 This reads the query from stdin, outputs the response to stdout, and exits.
@@ -121,7 +164,6 @@ This reads the query from stdin, outputs the response to stdout, and exits.
 | `FILE ...` | Files or glob patterns to index |
 | `--reindex` | Force re-upload and reindex files |
 | `--strict` | Only answer if information is in the indexed files |
-| `--debug` | Show retrieved chunks from vector store |
 | `-t`, `--thinking` | Override thinking level: `l`=low, `m`=medium, `h`=high |
 | `-n`, `--non-interactive` | Read query from stdin, write response to stdout, exit |
 
@@ -137,41 +179,30 @@ This reads the query from stdin, outputs the response to stdout, and exits.
 
 ## Supported File Types
 
-RAG CLI supports a wide range of file types:
+crag supports a wide range of file types:
 
 - **Documents**: `.txt`, `.md`, `.pdf`, `.doc`, `.docx`, `.pptx`, `.html`
 - **Data**: `.json`, `.xml`, `.csv`, `.yaml`, `.yml`
 - **Code**: `.py`, `.js`, `.ts`, `.jsx`, `.tsx`, `.java`, `.c`, `.cpp`, `.h`, `.hpp`, `.cs`, `.go`, `.rs`, `.rb`, `.php`, `.swift`, `.kt`, `.scala`, `.r`, `.sh`, `.bash`, `.sql`, `.lua`, `.pl`, `.hs`, `.elm`, `.ex`, `.clj`, `.lisp`, `.ml`, `.fs`
 - **Config**: `.toml`, `.ini`, `.cfg`, `.conf`, `.tex`, `.rst`, `.org`
 
-## Development
-
-### Project Structure
+## Project Structure
 
 ```
 rag-cli/
 ├── src/
-│   └── rag_cli/
-│       ├── __init__.py
-│       └── main.py      # Main CLI implementation
-├── pyproject.toml       # Project configuration and dependencies
-├── README.md
-└── .gitignore
-```
-
-### Running Locally
-
-After installing, you can run the CLI via the virtual environment:
-
-```bash
-./venv/bin/rag-cli 'docs/*.md'
-```
-
-Or activate the virtual environment first:
-
-```bash
-source venv/bin/activate
-rag-cli 'docs/*.md'
+│   ├── main.cpp           # Entry point and CLI handling
+│   ├── config.hpp         # Constants and configuration
+│   ├── console.hpp/cpp    # Terminal output with ANSI colors
+│   ├── settings.hpp/cpp   # Settings file management
+│   ├── file_resolver.hpp/cpp    # Glob pattern resolution
+│   ├── openai_client.hpp/cpp    # OpenAI API client
+│   ├── vector_store.hpp/cpp     # Vector store management
+│   └── chat.hpp/cpp       # Chat session and logging
+├── CMakeLists.txt         # Build configuration
+├── CMakePresets.json      # CMake presets for Ninja/Clang
+├── LICENSE
+└── README.md
 ```
 
 ## License

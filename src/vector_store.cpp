@@ -21,7 +21,7 @@ std::string create_vector_store(
     if (files_to_upload.empty()) {
         console.print_error("Error: No supported files found");
         console.println();
-        console.println("Usage: rag-cli 'docs/*.md' 'src/**/*.py'");
+        console.println("Usage: crag 'docs/*.md' 'src/**/*.py'");
         console.println("Supported: .txt, .md, .pdf, .py, .js, .json, .yaml, and many more");
         return "";
     }

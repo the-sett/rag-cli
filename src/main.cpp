@@ -128,14 +128,14 @@ Settings load_or_create_settings(
     if (files.empty()) {
         console.print_error("Error: No files specified for indexing");
         console.println();
-        console.println("Usage: rag-cli 'docs/*.md' 'src/**/*.py'");
-        console.println("       rag-cli --reindex 'knowledge/'");
+        console.println("Usage: crag 'docs/*.md' 'src/**/*.py'");
+        console.println("       crag --reindex 'knowledge/'");
         console.println();
         console.println("Examples:");
-        console.println("  rag-cli '*.md'                    # All markdown files in current dir");
-        console.println("  rag-cli 'docs/**/*.txt'           # All txt files in docs/ recursively");
-        console.println("  rag-cli README.md guide.md        # Specific files");
-        console.println("  rag-cli knowledge/                # All supported files in a directory");
+        console.println("  crag '*.md'                    # All markdown files in current dir");
+        console.println("  crag 'docs/**/*.txt'           # All txt files in docs/ recursively");
+        console.println("  crag README.md guide.md        # Specific files");
+        console.println("  crag knowledge/                # All supported files in a directory");
         std::exit(1);
     }
 
@@ -157,10 +157,10 @@ Settings load_or_create_settings(
 int main(int argc, char* argv[]) {
     CLI::App app{"A RAG CLI tool using OpenAI's vector store and file search"};
     app.footer("\nExamples:\n"
-               "  rag-cli 'docs/*.md'              Index markdown files and start chat\n"
-               "  rag-cli 'src/**/*.py' '*.md'     Index multiple patterns\n"
-               "  rag-cli --reindex 'knowledge/'  Re-index a directory\n"
-               "  rag-cli                          Use existing index\n");
+               "  crag 'docs/*.md'              Index markdown files and start chat\n"
+               "  crag 'src/**/*.py' '*.md'     Index multiple patterns\n"
+               "  crag --reindex 'knowledge/'   Re-index a directory\n"
+               "  crag                          Use existing index\n");
 
     std::vector<std::string> files;
     app.add_option("files", files, "Files or glob patterns to index (e.g., '*.md', 'docs/**/*.txt')");
@@ -171,8 +171,6 @@ int main(int argc, char* argv[]) {
     bool strict = false;
     app.add_flag("--strict", strict, "Only answer if info is in files");
 
-    bool debug = false;
-    app.add_flag("--debug", debug, "Show retrieved chunks");
 
     char thinking = '\0';
     app.add_option("-t,--thinking", thinking, "Override thinking level: l=low, m=medium, h=high")
@@ -234,11 +232,10 @@ int main(int argc, char* argv[]) {
     ChatSession chat(system_prompt, LOG_DIR);
 
     // Process a single query
-    auto process_query = [&](const std::string& user_input) -> std::vector<nlohmann::json> {
+    auto process_query = [&](const std::string& user_input) {
         chat.add_user_message(user_input);
 
         std::string streamed_text;
-        std::vector<nlohmann::json> retrieved_chunks;
 
         try {
             client.stream_response(
@@ -254,10 +251,7 @@ int main(int argc, char* argv[]) {
                         console.flush();
                     }
                     streamed_text += delta;
-                },
-                debug ? [&](const nlohmann::json& chunk) {
-                    retrieved_chunks.push_back(chunk);
-                } : std::function<void(const nlohmann::json&)>(nullptr)
+                }
             );
         } catch (const std::exception& e) {
             console.println();
@@ -265,7 +259,6 @@ int main(int argc, char* argv[]) {
         }
 
         chat.add_assistant_message(streamed_text);
-        return retrieved_chunks;
     };
 
     // Non-interactive mode
@@ -334,21 +327,10 @@ int main(int argc, char* argv[]) {
         console.print_colored("", ansi::GREEN);
         console.println();
 
-        auto retrieved_chunks = process_query(user_input);
+        process_query(user_input);
 
         console.println();
         console.println();
-
-        // Debug: show retrieved chunks
-        if (debug && !retrieved_chunks.empty()) {
-            console.println();
-            console.print_header("--- Retrieved Chunks ---");
-            for (const auto& chunk : retrieved_chunks) {
-                console.println(chunk.dump(2));
-            }
-            console.println("--------------------------------");
-            console.println();
-        }
     }
 
     return 0;

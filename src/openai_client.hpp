@@ -35,16 +35,13 @@ public:
                                   const std::string& batch_id);
 
     // Responses API with streaming
-    // Callbacks:
-    //   on_text: called for each text delta
-    //   on_file_search_result: called for file search results (debug mode)
+    // on_text callback is called for each text delta
     void stream_response(
         const std::string& model,
         const std::vector<Message>& conversation,
         const std::string& vector_store_id,
         const std::string& reasoning_effort,
-        std::function<void(const std::string&)> on_text,
-        std::function<void(const nlohmann::json&)> on_file_search_result = nullptr
+        std::function<void(const std::string&)> on_text
     );
 
 private:

@@ -275,8 +275,7 @@ void OpenAIClient::stream_response(
     const std::vector<Message>& conversation,
     const std::string& vector_store_id,
     const std::string& reasoning_effort,
-    std::function<void(const std::string&)> on_text,
-    std::function<void(const json&)> on_file_search_result
+    std::function<void(const std::string&)> on_text
 ) {
     std::string url = std::string(OPENAI_API_BASE) + "/responses";
 
@@ -313,10 +312,6 @@ void OpenAIClient::stream_response(
                 std::string delta = event.value("delta", "");
                 if (!delta.empty() && on_text) {
                     on_text(delta);
-                }
-            } else if (event_type == "response.file_search.result") {
-                if (on_file_search_result) {
-                    on_file_search_result(event);
                 }
             }
         } catch (const json::exception&) {

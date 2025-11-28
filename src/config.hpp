@@ -8,7 +8,7 @@
 namespace rag {
 
 // File paths
-constexpr const char* SETTINGS_FILE = "settings.json";
+constexpr const char* SETTINGS_FILE = ".crag.json";
 constexpr const char* LOG_DIR = "chat_logs";
 
 // Thinking level shortcuts
