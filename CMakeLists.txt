@@ -22,6 +22,7 @@ set(SOURCES
     src/vector_store.cpp
     src/chat.cpp
     src/markdown_renderer.cpp
+    src/terminal.cpp
 )
 
 add_executable(crag ${SOURCES})
@@ -52,6 +53,7 @@ if(BUILD_TESTS)
         src/vector_store.cpp
         src/chat.cpp
         src/markdown_renderer.cpp
+        src/terminal.cpp
     )
 
     add_library(crag_lib STATIC ${LIB_SOURCES})

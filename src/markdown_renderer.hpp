@@ -9,6 +9,15 @@ namespace rag {
  * Markdown renderer that buffers streaming text and renders complete
  * CommonMark blocks with ANSI terminal formatting.
  *
+ * Hybrid streaming mode (default):
+ *   - Raw text is output immediately as it arrives for responsive feedback
+ *   - When a block completes, the raw text is replaced with formatted markdown
+ *   - Uses ANSI cursor control to rewrite previous output
+ *
+ * Buffer-only mode (terminal_width = -1):
+ *   - Text is buffered until blocks complete
+ *   - Only formatted output is shown (original behavior)
+ *
  * Usage:
  *   MarkdownRenderer renderer([](const std::string& s) { std::cout << s; });
  *   renderer.feed(delta1);
@@ -24,12 +33,16 @@ public:
      * Create a markdown renderer.
      * @param output Callback invoked with formatted text chunks
      * @param colors_enabled Whether to emit ANSI color codes
+     * @param terminal_width Terminal width for line counting.
+     *        0 = auto-detect, -1 = disable rewrite (buffer-only mode)
      */
-    explicit MarkdownRenderer(OutputCallback output, bool colors_enabled = true);
+    explicit MarkdownRenderer(OutputCallback output, bool colors_enabled = true,
+                              int terminal_width = 0);
 
     /**
      * Feed a streaming text chunk.
-     * Complete blocks will be rendered and output immediately.
+     * In hybrid mode, raw text is output immediately.
+     * Complete blocks will be rewritten with formatted markdown.
      */
     void feed(const std::string& delta);
 
@@ -47,7 +60,12 @@ public:
 private:
     OutputCallback output_;
     bool colors_enabled_;
+    int terminal_width_;
     std::string buffer_;
+
+    // Hybrid streaming: track raw output for rewrite
+    std::string raw_output_;
+    static constexpr int MAX_REWRITE_LINES = 100;
 
     // Code block tracking
     bool in_code_block_ = false;
@@ -59,6 +77,10 @@ private:
     std::string extract_complete_block();
     bool is_code_fence(const std::string& line, size_t& fence_length, std::string& fence_chars) const;
     bool is_closing_fence(const std::string& line) const;
+
+    // Hybrid streaming output
+    void output_raw(const std::string& text);
+    void rewrite_block(size_t raw_len, const std::string& formatted);
 
     // Rendering
     std::string render_markdown(const std::string& markdown);

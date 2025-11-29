@@ -1,4 +1,5 @@
 #include "markdown_renderer.hpp"
+#include "terminal.hpp"
 #include <cmark.h>
 #include <sstream>
 #include <cstring>
@@ -48,32 +49,132 @@ namespace {
     }
 }
 
-MarkdownRenderer::MarkdownRenderer(OutputCallback output, bool colors_enabled)
+MarkdownRenderer::MarkdownRenderer(OutputCallback output, bool colors_enabled, int terminal_width)
     : output_(std::move(output))
     , colors_enabled_(colors_enabled)
-{}
+{
+    if (terminal_width == 0) {
+        // Auto-detect
+        if (terminal::is_tty()) {
+            terminal_width_ = terminal::get_width();
+        } else {
+            terminal_width_ = -1;  // Disable rewrite for non-TTY
+        }
+    } else {
+        terminal_width_ = terminal_width;
+    }
+}
 
 void MarkdownRenderer::feed(const std::string& delta) {
     buffer_ += delta;
 
+    // In hybrid mode, output raw text immediately
+    output_raw(delta);
+
     // Process complete blocks
     while (has_complete_block()) {
         std::string block = extract_complete_block();
-        std::string rendered = render_markdown(block);
-        output_(rendered);
+        std::string formatted = render_markdown(block);
+
+        // In hybrid mode, raw_output_ contains everything we've output.
+        // After extraction, buffer_ contains remaining (unprocessed) content.
+        // So the portion to rewrite = raw_output_.length() - buffer_.length()
+        // (which equals the block we just extracted)
+        size_t rewrite_len = raw_output_.length() - buffer_.length();
+
+        // Replace raw output with formatted version
+        rewrite_block(rewrite_len, formatted);
     }
 }
 
 void MarkdownRenderer::finish() {
     // Render any remaining content
     if (!buffer_.empty()) {
-        std::string rendered = render_markdown(buffer_);
-        output_(rendered);
+        std::string formatted = render_markdown(buffer_);
+        rewrite_block(buffer_.length(), formatted);
         buffer_.clear();
     }
+
+    // Reset state
+    raw_output_.clear();
     in_code_block_ = false;
     code_fence_length_ = 0;
     code_fence_chars_.clear();
+}
+
+void MarkdownRenderer::output_raw(const std::string& text) {
+    if (terminal_width_ < 0) {
+        // Rewrite disabled, don't output raw text
+        return;
+    }
+
+    // Output the raw text immediately
+    output_(text);
+
+    // Track it for later rewrite
+    raw_output_ += text;
+}
+
+void MarkdownRenderer::rewrite_block(size_t raw_len, const std::string& formatted) {
+    if (terminal_width_ < 0 || raw_output_.empty()) {
+        // Rewrite disabled or nothing to rewrite - just output formatted
+        output_(formatted);
+        return;
+    }
+
+    // Calculate how much of raw_output_ corresponds to this block
+    std::string raw_portion = raw_output_.substr(0, raw_len);
+    std::string remainder = raw_output_.substr(raw_len);
+
+    // Calculate total lines currently displayed
+    int total_lines = terminal::count_lines(raw_output_, terminal_width_);
+
+    if (total_lines > MAX_REWRITE_LINES) {
+        // Too many lines to safely rewrite, just append formatted
+        // (Raw output stays visible, which is acceptable)
+        output_(formatted);
+        raw_output_ = remainder;
+        return;
+    }
+
+    // Build rewrite sequence:
+    // 1. Move to start of current line
+    // 2. Move up to start of raw output
+    // 3. Clear from cursor to end of screen
+    // 4. Output formatted text
+    // 5. Re-output remainder (belongs to next block)
+
+    std::string seq;
+
+    // Move to beginning of current line
+    seq += "\r";
+
+    // Calculate how many lines to move up
+    // If raw_output_ ends with newline, cursor is on the NEXT line (empty),
+    // so we need to move up total_lines. Otherwise, we're on the last line
+    // of the content, so move up total_lines - 1.
+    int lines_up = total_lines;
+    if (!raw_output_.empty() && raw_output_.back() != '\n') {
+        lines_up = total_lines - 1;
+    }
+
+    if (lines_up > 0) {
+        seq += terminal::cursor::up(lines_up);
+    }
+
+    // Clear from cursor to end of screen
+    seq += terminal::clear::to_end_of_screen();
+
+    // Output the formatted version
+    seq += formatted;
+
+    // Re-output remainder (raw text for next block)
+    seq += remainder;
+
+    output_(seq);
+
+    // Update raw_output_ to just the remainder
+    raw_output_ = remainder;
 }
 
 bool MarkdownRenderer::is_code_fence(const std::string& line, size_t& fence_length, std::string& fence_chars) const {
@@ -209,20 +310,10 @@ bool MarkdownRenderer::has_complete_block() const {
         return true;
     }
 
-    // Look for single complete lines that are self-contained blocks
+    // Any complete line (ending with newline) can be rendered incrementally
     size_t newline = buffer_.find('\n');
     if (newline != std::string::npos) {
-        std::string line = buffer_.substr(0, newline);
-
-        // ATX headings
-        if (!line.empty() && line[0] == '#') {
-            return true;
-        }
-
-        // Thematic breaks (---, ***, ___)
-        if (is_thematic_break(line)) {
-            return true;
-        }
+        return true;
     }
 
     return false;
@@ -273,24 +364,12 @@ std::string MarkdownRenderer::extract_complete_block() {
         return block;
     }
 
-    // Check for self-contained single line blocks
+    // Extract any complete line for incremental rendering
     size_t newline = buffer_.find('\n');
     if (newline != std::string::npos) {
-        std::string line = buffer_.substr(0, newline);
-
-        // ATX headings
-        if (!line.empty() && line[0] == '#') {
-            std::string block = buffer_.substr(0, newline + 1);
-            buffer_.erase(0, newline + 1);
-            return block;
-        }
-
-        // Thematic breaks
-        if (is_thematic_break(line)) {
-            std::string block = buffer_.substr(0, newline + 1);
-            buffer_.erase(0, newline + 1);
-            return block;
-        }
+        std::string block = buffer_.substr(0, newline + 1);
+        buffer_.erase(0, newline + 1);
+        return block;
     }
 
     return "";
@@ -514,22 +593,52 @@ std::string MarkdownRenderer::code(const std::string& text) const {
 std::string MarkdownRenderer::code_block(const std::string& text, const std::string& lang) const {
     std::string result;
 
-    // Top border with language label
+    // Helper to repeat a UTF-8 string
+    auto repeat = [](const std::string& s, size_t n) {
+        std::string result;
+        result.reserve(s.length() * n);
+        for (size_t i = 0; i < n; i++) {
+            result += s;
+        }
+        return result;
+    };
+
+    // Calculate the width needed for the box
+    // Find the longest line in the code
+    size_t max_line_len = 0;
+    std::istringstream measure_stream(text);
+    std::string measure_line;
+    while (std::getline(measure_stream, measure_line)) {
+        if (measure_line.length() > max_line_len) {
+            max_line_len = measure_line.length();
+        }
+    }
+
+    // Minimum box width, accounting for language label
+    size_t label_len = lang.empty() ? 0 : lang.length() + 3;  // "[lang]" with brackets and dash
+    size_t min_width = 40;
+    size_t box_width = std::max({min_width, max_line_len + 4, label_len + 10});
+
+    // Top border: ┌─[lang]─────────────────────────┐
     result += ansi(DIM) + "┌";
+    size_t top_fill = box_width - 2;  // -2 for corners
     if (!lang.empty()) {
         result += "─[" + std::string(ansi(RESET)) + ansi(YELLOW) + lang + ansi(RESET) + ansi(DIM) + "]";
+        top_fill -= (lang.length() + 3);  // "[lang]"
     }
-    result += "────────────────────────" + std::string(ansi(RESET)) + "\n";
+    result += repeat("─", top_fill) + "┐" + std::string(ansi(RESET)) + "\n";
 
-    // Code content with left border
+    // Code content with left and right borders
     std::istringstream stream(text);
     std::string line;
     while (std::getline(stream, line)) {
-        result += ansi(DIM) + "│" + ansi(RESET) + " " + ansi(GREEN) + line + ansi(RESET) + "\n";
+        size_t padding = box_width - 4 - line.length();  // -4 for "│ " and " │"
+        result += ansi(DIM) + "│" + ansi(RESET) + " " + ansi(GREEN) + line + ansi(RESET);
+        result += std::string(padding, ' ') + ansi(DIM) + " │" + ansi(RESET) + "\n";
     }
 
-    // Bottom border
-    result += ansi(DIM) + "└────────────────────────────" + std::string(ansi(RESET)) + "\n";
+    // Bottom border: └─────────────────────────────────┘
+    result += ansi(DIM) + "└" + repeat("─", box_width - 2) + "┘" + std::string(ansi(RESET)) + "\n";
 
     return result;
 }

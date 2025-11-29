@@ -24,7 +24,11 @@ std::string strip_ansi(const std::string& text) {
         if (c == '\033') {
             in_escape = true;
         } else if (in_escape) {
-            if (c == 'm' || c == '\\') {
+            // CSI sequences end with a letter (A-Z, a-z) or certain symbols
+            // SGR ends with 'm', cursor movement with letters like A,B,C,D,G,H,J,K
+            // OSC sequences end with BEL (\007) or ST (\033\\)
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                c == '\\' || c == '\007') {
                 in_escape = false;
             }
         } else {
@@ -472,4 +476,269 @@ TEST_CASE("is_thematic_break with spaces between markers", "[markdown][hr]") {
     REQUIRE(MarkdownRenderer::is_thematic_break("*  *  *") == true);
     REQUIRE(MarkdownRenderer::is_thematic_break("_   _   _") == true);
     REQUIRE(MarkdownRenderer::is_thematic_break("-  -  -  -") == true);
+}
+
+// ============================================================================
+// Terminal utilities
+// ============================================================================
+
+#include "terminal.hpp"
+
+TEST_CASE("Terminal cursor sequences", "[terminal]") {
+    REQUIRE(rag::terminal::cursor::up(3) == "\033[3A");
+    REQUIRE(rag::terminal::cursor::down(2) == "\033[2B");
+    REQUIRE(rag::terminal::cursor::column(1) == "\033[1G");
+    REQUIRE(rag::terminal::cursor::save() == "\033[s");
+    REQUIRE(rag::terminal::cursor::restore() == "\033[u");
+}
+
+TEST_CASE("Terminal cursor up with zero or negative", "[terminal]") {
+    REQUIRE(rag::terminal::cursor::up(0) == "");
+    REQUIRE(rag::terminal::cursor::up(-1) == "");
+}
+
+TEST_CASE("Terminal clear sequences", "[terminal]") {
+    REQUIRE(rag::terminal::clear::to_end_of_line() == "\033[K");
+    REQUIRE(rag::terminal::clear::to_end_of_screen() == "\033[J");
+    REQUIRE(rag::terminal::clear::line() == "\033[2K");
+}
+
+TEST_CASE("Terminal count_lines with simple text", "[terminal]") {
+    REQUIRE(rag::terminal::count_lines("", 80) == 0);
+    REQUIRE(rag::terminal::count_lines("hello", 80) == 1);
+    REQUIRE(rag::terminal::count_lines("hello\n", 80) == 1);
+    REQUIRE(rag::terminal::count_lines("hello\nworld", 80) == 2);
+    REQUIRE(rag::terminal::count_lines("hello\nworld\n", 80) == 2);
+    REQUIRE(rag::terminal::count_lines("a\nb\nc", 80) == 3);
+}
+
+TEST_CASE("Terminal count_lines with line wrapping", "[terminal]") {
+    // 10 chars on 5-wide terminal = 2 lines
+    REQUIRE(rag::terminal::count_lines("1234567890", 5) == 2);
+    // 15 chars on 5-wide terminal = 3 lines
+    REQUIRE(rag::terminal::count_lines("123456789012345", 5) == 3);
+}
+
+TEST_CASE("Terminal count_lines ignores ANSI codes", "[terminal]") {
+    // ANSI codes should not count towards line width
+    std::string with_ansi = "\033[1mhello\033[0m";  // "hello" with bold
+    REQUIRE(rag::terminal::count_lines(with_ansi, 80) == 1);
+
+    // Even with lots of ANSI, only 5 visible chars
+    std::string lots_of_ansi = "\033[31m\033[1m\033[4mhi\033[0m";
+    REQUIRE(rag::terminal::count_lines(lots_of_ansi, 80) == 1);
+}
+
+TEST_CASE("Terminal display_width", "[terminal]") {
+    REQUIRE(rag::terminal::display_width("hello") == 5);
+    REQUIRE(rag::terminal::display_width("") == 0);
+    REQUIRE(rag::terminal::display_width("\033[1mhello\033[0m") == 5);
+}
+
+// ============================================================================
+// Hybrid streaming mode
+// ============================================================================
+
+TEST_CASE("Buffer-only mode when terminal_width is -1", "[markdown][streaming]") {
+    std::vector<std::string> outputs;
+    MarkdownRenderer renderer([&](const std::string& s) { outputs.push_back(s); }, true, -1);
+
+    renderer.feed("# Hello\n\n");
+
+    // In buffer-only mode, should have only the formatted output (no raw first)
+    // The first output should be the formatted heading
+    REQUIRE(outputs.size() >= 1);
+    std::string combined;
+    for (const auto& s : outputs) combined += s;
+    REQUIRE(strip_ansi(combined).find("# Hello") != std::string::npos);
+}
+
+TEST_CASE("Hybrid mode outputs raw then rewrites", "[markdown][streaming]") {
+    std::vector<std::string> outputs;
+    MarkdownRenderer renderer([&](const std::string& s) { outputs.push_back(s); }, true, 80);
+
+    renderer.feed("# He");
+    // Should have output raw "# He"
+    REQUIRE(outputs.size() >= 1);
+    REQUIRE(outputs[0].find("# He") != std::string::npos);
+
+    renderer.feed("llo\n\n");
+    // Should have more outputs including rewrite sequence
+
+    std::string combined;
+    for (const auto& s : outputs) combined += s;
+
+    // Should contain cursor control sequences for rewrite
+    REQUIRE(combined.find("\r") != std::string::npos);  // Carriage return
+    REQUIRE(combined.find("\033[J") != std::string::npos);  // Clear to end
+
+    // Final content should have the formatted heading
+    REQUIRE(strip_ansi(combined).find("Hello") != std::string::npos);
+}
+
+TEST_CASE("Hybrid mode handles multiple blocks", "[markdown][streaming]") {
+    std::vector<std::string> outputs;
+    MarkdownRenderer renderer([&](const std::string& s) { outputs.push_back(s); }, true, 80);
+
+    renderer.feed("First paragraph.\n\n");
+    renderer.feed("Second paragraph.\n\n");
+    renderer.finish();
+
+    // Check that both paragraphs appear in at least one of the outputs
+    // (the rewrite sequence makes simple string concatenation unreliable)
+    bool found_first = false;
+    bool found_second = false;
+    for (const auto& s : outputs) {
+        std::string stripped = strip_ansi(s);
+        if (stripped.find("First paragraph") != std::string::npos) found_first = true;
+        if (stripped.find("Second paragraph") != std::string::npos) found_second = true;
+    }
+    REQUIRE(found_first);
+    REQUIRE(found_second);
+}
+
+TEST_CASE("Hybrid mode with code block", "[markdown][streaming]") {
+    std::vector<std::string> outputs;
+    MarkdownRenderer renderer([&](const std::string& s) { outputs.push_back(s); }, true, 80);
+
+    renderer.feed("```cpp\n");
+    renderer.feed("int x = 5;\n");
+    renderer.feed("```\n");
+    renderer.finish();
+
+    std::string combined;
+    for (const auto& s : outputs) combined += s;
+
+    std::string stripped = strip_ansi(combined);
+    REQUIRE(stripped.find("int x = 5") != std::string::npos);
+}
+
+// ============================================================================
+// Code block box rendering
+// ============================================================================
+
+TEST_CASE("Code block has proper box corners", "[markdown][code]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);  // Buffer-only mode
+
+    renderer.feed("```\ntest\n```\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Should have all four corners
+    REQUIRE(stripped.find("┌") != std::string::npos);
+    REQUIRE(stripped.find("┐") != std::string::npos);
+    REQUIRE(stripped.find("└") != std::string::npos);
+    REQUIRE(stripped.find("┘") != std::string::npos);
+
+    // Should have vertical borders on both sides
+    // Count left and right borders (should be equal)
+    size_t left_count = 0, right_count = 0;
+    size_t pos = 0;
+    while ((pos = stripped.find("│", pos)) != std::string::npos) {
+        // Check if it's at start of content (after newline) or end (before newline)
+        if (pos > 0 && stripped[pos-1] == '\n') {
+            left_count++;
+        }
+        pos += 3;  // UTF-8 character is 3 bytes
+    }
+    REQUIRE(left_count >= 1);  // At least one line of content
+}
+
+TEST_CASE("Code block with language label", "[markdown][code]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("```python\nprint('hello')\n```\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Should have language in brackets
+    REQUIRE(stripped.find("[python]") != std::string::npos);
+
+    // Should still have proper corners
+    REQUIRE(stripped.find("┌") != std::string::npos);
+    REQUIRE(stripped.find("┐") != std::string::npos);
+}
+
+TEST_CASE("Code block adjusts to content width", "[markdown][code]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("```\nshort\nthis is a much longer line of code\n```\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Find the top and bottom borders
+    size_t top_start = stripped.find("┌");
+    size_t top_end = stripped.find("┐");
+    size_t bottom_start = stripped.find("└");
+    size_t bottom_end = stripped.find("┘");
+
+    REQUIRE(top_start != std::string::npos);
+    REQUIRE(top_end != std::string::npos);
+    REQUIRE(bottom_start != std::string::npos);
+    REQUIRE(bottom_end != std::string::npos);
+
+    // Top and bottom should be same width (corners are 3 bytes each in UTF-8)
+    size_t top_width = top_end - top_start;
+    size_t bottom_width = bottom_end - bottom_start;
+    REQUIRE(top_width == bottom_width);
+}
+
+// ============================================================================
+// Rewrite length calculation
+// ============================================================================
+
+TEST_CASE("Rewrite calculates correct length with trailing content", "[markdown][streaming]") {
+    std::vector<std::string> outputs;
+    MarkdownRenderer renderer([&](const std::string& s) { outputs.push_back(s); }, true, 80);
+
+    // Feed first block completely
+    renderer.feed("First.\n\n");
+
+    // Feed second block in parts
+    renderer.feed("Second");
+    renderer.feed(" paragraph.\n\n");
+
+    renderer.finish();
+
+    // Both paragraphs should appear
+    bool found_first = false;
+    bool found_second = false;
+    for (const auto& s : outputs) {
+        std::string stripped = strip_ansi(s);
+        if (stripped.find("First") != std::string::npos) found_first = true;
+        if (stripped.find("Second paragraph") != std::string::npos) found_second = true;
+    }
+    REQUIRE(found_first);
+    REQUIRE(found_second);
+}
+
+TEST_CASE("Rewrite handles interleaved content correctly", "[markdown][streaming]") {
+    std::vector<std::string> outputs;
+    MarkdownRenderer renderer([&](const std::string& s) { outputs.push_back(s); }, true, 80);
+
+    // Simulate realistic streaming where blocks interleave
+    renderer.feed("# Title\n");
+    renderer.feed("\nParagraph text here.\n\n");
+    renderer.feed("More text.\n\n");
+
+    renderer.finish();
+
+    bool found_title = false;
+    bool found_para = false;
+    bool found_more = false;
+    for (const auto& s : outputs) {
+        std::string stripped = strip_ansi(s);
+        if (stripped.find("Title") != std::string::npos) found_title = true;
+        if (stripped.find("Paragraph text") != std::string::npos) found_para = true;
+        if (stripped.find("More text") != std::string::npos) found_more = true;
+    }
+    REQUIRE(found_title);
+    REQUIRE(found_para);
+    REQUIRE(found_more);
 }
