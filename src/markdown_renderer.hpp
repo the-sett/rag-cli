@@ -79,6 +79,7 @@ private:
     bool is_closing_fence(const std::string& line) const;
     bool is_table_row(const std::string& line) const;
     bool is_table_separator(const std::string& line) const;
+    bool is_list_item(const std::string& line) const;
 
     // Hybrid streaming output
     void output_raw(const std::string& text);

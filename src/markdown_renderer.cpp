@@ -314,6 +314,41 @@ bool MarkdownRenderer::is_table_separator(const std::string& line) const {
     return found_dash;  // Must have at least one dash
 }
 
+bool MarkdownRenderer::is_list_item(const std::string& line) const {
+    // List items start with *, -, + (unordered) or digits followed by . or ) (ordered)
+    // Up to 3 leading spaces allowed
+    size_t start = 0;
+    while (start < line.length() && start < 3 && line[start] == ' ') {
+        start++;
+    }
+
+    if (start >= line.length()) {
+        return false;
+    }
+
+    char c = line[start];
+
+    // Unordered list markers: *, -, +
+    if (c == '*' || c == '-' || c == '+') {
+        // Must be followed by space (or end of line for empty item)
+        return start + 1 >= line.length() || line[start + 1] == ' ';
+    }
+
+    // Ordered list: digit(s) followed by . or )
+    if (c >= '0' && c <= '9') {
+        size_t i = start;
+        while (i < line.length() && line[i] >= '0' && line[i] <= '9') {
+            i++;
+        }
+        if (i < line.length() && (line[i] == '.' || line[i] == ')')) {
+            // Must be followed by space (or end of line)
+            return i + 1 >= line.length() || line[i + 1] == ' ';
+        }
+    }
+
+    return false;
+}
+
 bool MarkdownRenderer::has_complete_block() const {
     if (buffer_.empty()) {
         return false;
@@ -364,6 +399,29 @@ bool MarkdownRenderer::has_complete_block() const {
                 pos = next_newline + 1;
             }
             // All lines so far are table rows, wait for more
+            return false;
+        }
+
+        // Check if buffer starts with a list item - scan to find end
+        if (is_list_item(first_line)) {
+            // Scan through the buffer to see if we have a complete list
+            size_t pos = first_newline + 1;
+            while (pos < buffer_.length()) {
+                size_t next_newline = buffer_.find('\n', pos);
+                if (next_newline == std::string::npos) {
+                    // No complete line yet, wait for more
+                    return false;
+                }
+                std::string line = buffer_.substr(pos, next_newline - pos);
+                // List continues with: more list items, blank lines, or indented continuation
+                if (is_list_item(line) || line.empty() || (!line.empty() && line[0] == ' ')) {
+                    pos = next_newline + 1;
+                } else {
+                    // Found non-list line, list is complete
+                    return true;
+                }
+            }
+            // All lines so far are list content, wait for more
             return false;
         }
     }
@@ -444,6 +502,31 @@ std::string MarkdownRenderer::extract_complete_block() {
             buffer_.erase(0, last_table_row_end + 1);
             return block;
         }
+
+        // Check for list - extract all consecutive list content
+        if (is_list_item(first_line)) {
+            size_t last_list_end = first_newline;
+            size_t pos = first_newline + 1;
+
+            while (pos < buffer_.length()) {
+                size_t next_newline = buffer_.find('\n', pos);
+                if (next_newline == std::string::npos) {
+                    break;
+                }
+                std::string line = buffer_.substr(pos, next_newline - pos);
+                // List continues with: more list items, blank lines, or indented continuation
+                if (is_list_item(line) || line.empty() || (!line.empty() && line[0] == ' ')) {
+                    last_list_end = next_newline;
+                    pos = next_newline + 1;
+                } else {
+                    break;
+                }
+            }
+
+            std::string block = buffer_.substr(0, last_list_end + 1);
+            buffer_.erase(0, last_list_end + 1);
+            return block;
+        }
     }
 
     // Check for blank line (paragraph separator)
@@ -494,6 +577,7 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
     bool in_ordered_list = false;
     int list_item_number = 0;
     int list_indent = 0;
+    std::string current_indent;  // Indent string for nested content
 
     while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
         cmark_node* cur = cmark_iter_get_node(iter);
@@ -518,9 +602,7 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
 
             case CMARK_NODE_PARAGRAPH:
                 if (!entering) {
-                    if (!in_list) {
-                        result += "\n";
-                    }
+                    result += "\n";
                 }
                 break;
 
@@ -554,7 +636,19 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
                 if (entering) {
                     const char* info = cmark_node_get_fence_info(cur);
                     const char* literal = cmark_node_get_literal(cur);
-                    result += code_block(literal ? literal : "", info ? info : "");
+                    std::string block = code_block(literal ? literal : "", info ? info : "");
+                    // Apply current indent to each line of the code block
+                    if (!current_indent.empty()) {
+                        std::string indented;
+                        std::istringstream stream(block);
+                        std::string line;
+                        while (std::getline(stream, line)) {
+                            indented += current_indent + line + "\n";
+                        }
+                        result += indented;
+                    } else {
+                        result += block;
+                    }
                 }
                 break;
             }
@@ -602,12 +696,15 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
 
             case CMARK_NODE_LIST: {
                 if (entering) {
+                    // Blank line before list
+                    result += "\n";
                     in_list = true;
                     in_ordered_list = (cmark_node_get_list_type(cur) == CMARK_ORDERED_LIST);
                     list_item_number = cmark_node_get_list_start(cur);
                     list_indent = 0;
                 } else {
                     in_list = false;
+                    // Blank line after list
                     result += "\n";
                 }
                 break;
@@ -615,14 +712,22 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
 
             case CMARK_NODE_ITEM: {
                 if (entering) {
-                    // Get the text content of this list item
-                    std::string item_text = collect_text(cur);
-                    result += list_item(item_text, in_ordered_list, list_item_number, list_indent);
+                    // Output the list marker, content will follow from children
+                    std::string prefix = "  " + std::string(list_indent * 2, ' ');
                     if (in_ordered_list) {
+                        prefix += std::to_string(list_item_number) + ". ";
                         list_item_number++;
+                    } else {
+                        prefix += ansi(CYAN) + "*" + ansi(RESET) + " ";
                     }
-                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                    result += prefix;
+                    // Set indent for nested content (code blocks, etc.)
+                    // "  " base + list_indent + "   " for content alignment (past the marker)
+                    current_indent = "  " + std::string(list_indent * 2, ' ') + "   ";
+                } else {
+                    current_indent.clear();
                 }
+                // Don't skip children - let them be processed naturally
                 break;
             }
 
@@ -762,7 +867,7 @@ std::string MarkdownRenderer::heading(const std::string& text, int level) const 
             break;
     }
 
-    return "\n" + ansi(BOLD) + ansi(color) + prefix + text + ansi(RESET) + "\n";
+    return ansi(BOLD) + ansi(color) + prefix + text + ansi(RESET) + "\n";
 }
 
 std::string MarkdownRenderer::link(const std::string& text, const std::string& url) const {
@@ -781,11 +886,12 @@ std::string MarkdownRenderer::blockquote_line(const std::string& text) const {
 }
 
 std::string MarkdownRenderer::list_item(const std::string& text, bool ordered, int number, int indent) const {
-    std::string prefix(indent * 2, ' ');
+    // Base indent of 2 spaces, plus additional indent for nested lists
+    std::string prefix = "  " + std::string(indent * 2, ' ');
     if (ordered) {
         prefix += std::to_string(number) + ". ";
     } else {
-        prefix += ansi(CYAN) + "•" + ansi(RESET) + " ";
+        prefix += ansi(CYAN) + "*" + ansi(RESET) + " ";
     }
     return prefix + text + "\n";
 }
