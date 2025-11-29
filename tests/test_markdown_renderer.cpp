@@ -742,3 +742,180 @@ TEST_CASE("Rewrite handles interleaved content correctly", "[markdown][streaming
     REQUIRE(found_para);
     REQUIRE(found_more);
 }
+
+// ============================================================================
+// Table rendering
+// ============================================================================
+
+TEST_CASE("Simple table renders with box drawing", "[markdown][table]") {
+    OutputCollector output;
+    // Use buffer mode (-1) for easier output verification
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("| A | B |\n");
+    renderer.feed("| --- | --- |\n");
+    renderer.feed("| 1 | 2 |\n\n");
+
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // Should contain box drawing characters
+    REQUIRE(stripped.find("┌") != std::string::npos);
+    REQUIRE(stripped.find("┐") != std::string::npos);
+    REQUIRE(stripped.find("└") != std::string::npos);
+    REQUIRE(stripped.find("┘") != std::string::npos);
+    REQUIRE(stripped.find("│") != std::string::npos);
+    // Should contain content
+    REQUIRE(stripped.find("A") != std::string::npos);
+    REQUIRE(stripped.find("B") != std::string::npos);
+    REQUIRE(stripped.find("1") != std::string::npos);
+    REQUIRE(stripped.find("2") != std::string::npos);
+}
+
+TEST_CASE("Table header is bold", "[markdown][table]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("| Header |\n");
+    renderer.feed("| --- |\n");
+    renderer.feed("| Data |\n\n");
+
+    renderer.finish();
+
+    // Header should have bold escape code before it
+    REQUIRE(output.result.find("\033[1m") != std::string::npos);
+}
+
+TEST_CASE("Table with multiple columns", "[markdown][table]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("| Col1 | Col2 | Col3 |\n");
+    renderer.feed("| --- | --- | --- |\n");
+    renderer.feed("| A | B | C |\n\n");
+
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    REQUIRE(stripped.find("Col1") != std::string::npos);
+    REQUIRE(stripped.find("Col2") != std::string::npos);
+    REQUIRE(stripped.find("Col3") != std::string::npos);
+    REQUIRE(stripped.find("A") != std::string::npos);
+    REQUIRE(stripped.find("B") != std::string::npos);
+    REQUIRE(stripped.find("C") != std::string::npos);
+}
+
+TEST_CASE("Table with word wrapping", "[markdown][table]") {
+    OutputCollector output;
+    // Narrow terminal width to force wrapping
+    MarkdownRenderer renderer(std::ref(output), true, 40);
+
+    renderer.feed("| Short | This is a very long cell that should wrap |\n");
+    renderer.feed("| --- | --- |\n");
+    renderer.feed("| X | Y |\n\n");
+
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    REQUIRE(stripped.find("Short") != std::string::npos);
+    REQUIRE(stripped.find("X") != std::string::npos);
+    REQUIRE(stripped.find("Y") != std::string::npos);
+    // The long text should appear (possibly wrapped)
+    REQUIRE(stripped.find("long") != std::string::npos);
+}
+
+TEST_CASE("Table header separator uses double lines", "[markdown][table]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("| Header |\n");
+    renderer.feed("| --- |\n");
+    renderer.feed("| Data |\n\n");
+
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // Header separator should use ═ (double line)
+    REQUIRE(stripped.find("═") != std::string::npos);
+}
+
+TEST_CASE("Table streaming waits for complete table", "[markdown][table][streaming]") {
+    std::vector<std::string> outputs;
+    MarkdownRenderer renderer([&](const std::string& s) { outputs.push_back(s); }, true, 80);
+
+    // Feed table incrementally
+    renderer.feed("| A | B |\n");
+    size_t after_header = outputs.size();
+
+    renderer.feed("| --- | --- |\n");
+    size_t after_sep = outputs.size();
+
+    renderer.feed("| 1 | 2 |\n");
+    size_t after_row = outputs.size();
+
+    // Table shouldn't be rendered yet (still accumulating)
+    // It should only output raw text in streaming mode
+
+    // End the table with a blank line
+    renderer.feed("\n");
+
+    renderer.finish();
+
+    // Final output should contain box drawing (table was rendered)
+    std::string all_output;
+    for (const auto& s : outputs) {
+        all_output += s;
+    }
+    std::string stripped = strip_ansi(all_output);
+    REQUIRE(stripped.find("┌") != std::string::npos);
+}
+
+TEST_CASE("Table without header separator still renders", "[markdown][table]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    // No separator line - should still be detected as table rows
+    renderer.feed("| A | B |\n");
+    renderer.feed("| 1 | 2 |\n\n");
+
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    REQUIRE(stripped.find("│") != std::string::npos);
+    REQUIRE(stripped.find("A") != std::string::npos);
+    REQUIRE(stripped.find("B") != std::string::npos);
+}
+
+TEST_CASE("Empty cells handled correctly", "[markdown][table]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("| A | | C |\n");
+    renderer.feed("| --- | --- | --- |\n");
+    renderer.feed("| | X | |\n\n");
+
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    REQUIRE(stripped.find("A") != std::string::npos);
+    REQUIRE(stripped.find("C") != std::string::npos);
+    REQUIRE(stripped.find("X") != std::string::npos);
+}
+
+TEST_CASE("Table followed by text", "[markdown][table]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("| A | B |\n");
+    renderer.feed("| --- | --- |\n");
+    renderer.feed("| 1 | 2 |\n");
+    renderer.feed("Some text after\n\n");
+
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // Table should be rendered
+    REQUIRE(stripped.find("┌") != std::string::npos);
+    // Text after should appear
+    REQUIRE(stripped.find("Some text after") != std::string::npos);
+}

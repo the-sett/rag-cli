@@ -77,6 +77,8 @@ private:
     std::string extract_complete_block();
     bool is_code_fence(const std::string& line, size_t& fence_length, std::string& fence_chars) const;
     bool is_closing_fence(const std::string& line) const;
+    bool is_table_row(const std::string& line) const;
+    bool is_table_separator(const std::string& line) const;
 
     // Hybrid streaming output
     void output_raw(const std::string& text);
@@ -96,6 +98,7 @@ private:
     std::string blockquote_line(const std::string& text) const;
     std::string list_item(const std::string& text, bool ordered, int number, int indent) const;
     std::string horizontal_rule() const;
+    std::string render_table(const std::string& table_text) const;
 };
 
 } // namespace rag

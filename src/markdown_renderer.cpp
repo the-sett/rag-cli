@@ -3,6 +3,8 @@
 #include <cmark.h>
 #include <sstream>
 #include <cstring>
+#include <vector>
+#include <algorithm>
 
 namespace rag {
 
@@ -271,6 +273,47 @@ bool MarkdownRenderer::is_thematic_break(const std::string& line) {
     return marker_count >= 3;
 }
 
+bool MarkdownRenderer::is_table_row(const std::string& line) const {
+    // A table row starts and ends with | (after trimming whitespace)
+    // and contains at least 2 pipes total
+    size_t start = line.find_first_not_of(' ');
+    if (start == std::string::npos || line[start] != '|') {
+        return false;
+    }
+
+    size_t end = line.find_last_not_of(' ');
+    if (end == std::string::npos || line[end] != '|') {
+        return false;
+    }
+
+    // Must have at least 2 pipes (start and end can be the same for edge cases,
+    // but realistically we need start != end for a valid row like "| x |")
+    return start < end;
+}
+
+bool MarkdownRenderer::is_table_separator(const std::string& line) const {
+    // Table separator line: | --- | --- | or |:---:|:---|
+    // Contains |, -, and optionally : and spaces
+    if (!is_table_row(line)) {
+        return false;
+    }
+
+    // Check that content between pipes is only -, :, and spaces
+    bool found_dash = false;
+    for (size_t i = 0; i < line.length(); i++) {
+        char c = line[i];
+        if (c == '|' || c == ' ' || c == ':') {
+            continue;
+        } else if (c == '-') {
+            found_dash = true;
+        } else {
+            return false;  // Invalid character for separator
+        }
+    }
+
+    return found_dash;  // Must have at least one dash
+}
+
 bool MarkdownRenderer::has_complete_block() const {
     if (buffer_.empty()) {
         return false;
@@ -292,7 +335,7 @@ bool MarkdownRenderer::has_complete_block() const {
         return false;
     }
 
-    // Check if buffer starts with a code fence
+    // Check if buffer starts with a code fence or table row
     size_t first_newline = buffer_.find('\n');
     if (first_newline != std::string::npos) {
         std::string first_line = buffer_.substr(0, first_newline);
@@ -300,6 +343,27 @@ bool MarkdownRenderer::has_complete_block() const {
         std::string fence_chars;
         if (is_code_fence(first_line, fence_len, fence_chars)) {
             // Starting a code block - don't have a complete block yet
+            return false;
+        }
+
+        // Check if buffer starts with a table row - scan to find end
+        if (is_table_row(first_line)) {
+            // Scan through the buffer to see if we have a complete table
+            size_t pos = first_newline + 1;
+            while (pos < buffer_.length()) {
+                size_t next_newline = buffer_.find('\n', pos);
+                if (next_newline == std::string::npos) {
+                    // No complete line yet, wait for more
+                    return false;
+                }
+                std::string line = buffer_.substr(pos, next_newline - pos);
+                if (!is_table_row(line)) {
+                    // Found non-table line, table is complete
+                    return true;
+                }
+                pos = next_newline + 1;
+            }
+            // All lines so far are table rows, wait for more
             return false;
         }
     }
@@ -341,7 +405,7 @@ std::string MarkdownRenderer::extract_complete_block() {
         }
     }
 
-    // Check for code fence start
+    // Check for code fence or table start
     size_t first_newline = buffer_.find('\n');
     if (first_newline != std::string::npos) {
         std::string first_line = buffer_.substr(0, first_newline);
@@ -353,6 +417,32 @@ std::string MarkdownRenderer::extract_complete_block() {
             code_fence_chars_ = fence_chars;
             // Don't extract yet - wait for closing fence
             return "";
+        }
+
+        // Check for table - extract all consecutive table rows
+        if (is_table_row(first_line)) {
+            size_t last_table_row_end = first_newline;
+            size_t pos = first_newline + 1;
+
+            while (pos < buffer_.length()) {
+                size_t next_newline = buffer_.find('\n', pos);
+                if (next_newline == std::string::npos) {
+                    // Incomplete line, shouldn't happen since has_complete_block passed
+                    break;
+                }
+                std::string line = buffer_.substr(pos, next_newline - pos);
+                if (is_table_row(line)) {
+                    last_table_row_end = next_newline;
+                    pos = next_newline + 1;
+                } else {
+                    // Non-table line - extract the table
+                    break;
+                }
+            }
+
+            std::string block = buffer_.substr(0, last_table_row_end + 1);
+            buffer_.erase(0, last_table_row_end + 1);
+            return block;
         }
     }
 
@@ -378,6 +468,12 @@ std::string MarkdownRenderer::extract_complete_block() {
 std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
     if (markdown.empty()) {
         return "";
+    }
+
+    // Check if this is a table (starts with |)
+    size_t first_non_space = markdown.find_first_not_of(" \n");
+    if (first_non_space != std::string::npos && markdown[first_non_space] == '|') {
+        return render_table(markdown);
     }
 
     cmark_node* doc = cmark_parse_document(
@@ -696,6 +792,231 @@ std::string MarkdownRenderer::list_item(const std::string& text, bool ordered, i
 
 std::string MarkdownRenderer::horizontal_rule() const {
     return ansi(DIM) + "────────────────────────────────────────" + ansi(RESET) + "\n";
+}
+
+std::string MarkdownRenderer::render_table(const std::string& table_text) const {
+    // Parse table into rows and cells
+    std::vector<std::vector<std::string>> rows;
+    std::istringstream stream(table_text);
+    std::string line;
+    int separator_row = -1;
+
+    while (std::getline(stream, line)) {
+        // Skip empty lines
+        if (line.find_first_not_of(" \t") == std::string::npos) {
+            continue;
+        }
+
+        // Check if this is a separator row
+        if (is_table_separator(line)) {
+            separator_row = static_cast<int>(rows.size());
+            continue;  // Skip separator row in output
+        }
+
+        // Parse cells from this row
+        std::vector<std::string> cells;
+        size_t pos = 0;
+
+        // Skip leading |
+        size_t start = line.find('|');
+        if (start == std::string::npos) continue;
+        pos = start + 1;
+
+        while (pos < line.length()) {
+            size_t next_pipe = line.find('|', pos);
+            if (next_pipe == std::string::npos) {
+                break;
+            }
+
+            // Extract cell content and trim whitespace
+            std::string cell = line.substr(pos, next_pipe - pos);
+            size_t cell_start = cell.find_first_not_of(' ');
+            size_t cell_end = cell.find_last_not_of(' ');
+            if (cell_start != std::string::npos && cell_end != std::string::npos) {
+                cell = cell.substr(cell_start, cell_end - cell_start + 1);
+            } else {
+                cell = "";
+            }
+            cells.push_back(cell);
+            pos = next_pipe + 1;
+        }
+
+        if (!cells.empty()) {
+            rows.push_back(cells);
+        }
+    }
+
+    if (rows.empty()) {
+        return table_text;  // Fallback to raw
+    }
+
+    // Determine number of columns
+    size_t num_cols = 0;
+    for (const auto& row : rows) {
+        num_cols = std::max(num_cols, row.size());
+    }
+
+    if (num_cols == 0) {
+        return table_text;
+    }
+
+    // Calculate available width
+    int available_width = terminal_width_ > 0 ? terminal_width_ : 80;
+
+    // Reserve space for borders: │ col │ col │ = (num_cols + 1) pipes + 2 spaces per col
+    int border_overhead = static_cast<int>(num_cols + 1 + num_cols * 2);
+    int content_width = available_width - border_overhead;
+
+    if (content_width < static_cast<int>(num_cols * 5)) {
+        // Too narrow, fall back to simpler rendering
+        content_width = static_cast<int>(num_cols * 10);
+    }
+
+    // Calculate column widths based on content
+    std::vector<size_t> col_widths(num_cols, 0);
+    for (const auto& row : rows) {
+        for (size_t i = 0; i < row.size() && i < num_cols; i++) {
+            col_widths[i] = std::max(col_widths[i], row[i].length());
+        }
+    }
+
+    // Scale columns to fit available width
+    size_t total_content = 0;
+    for (size_t w : col_widths) {
+        total_content += w;
+    }
+
+    if (total_content > static_cast<size_t>(content_width)) {
+        // Need to scale down - distribute width proportionally but ensure minimum
+        size_t min_width = 8;
+        std::vector<size_t> new_widths(num_cols);
+
+        for (size_t i = 0; i < num_cols; i++) {
+            double ratio = static_cast<double>(col_widths[i]) / total_content;
+            new_widths[i] = std::max(min_width, static_cast<size_t>(ratio * content_width));
+        }
+        col_widths = new_widths;
+    }
+
+    // Helper to wrap text into lines of max width
+    auto wrap_text = [](const std::string& text, size_t width) -> std::vector<std::string> {
+        std::vector<std::string> lines;
+        if (text.empty() || width == 0) {
+            lines.push_back("");
+            return lines;
+        }
+
+        size_t pos = 0;
+        while (pos < text.length()) {
+            size_t remaining = text.length() - pos;
+            if (remaining <= width) {
+                lines.push_back(text.substr(pos));
+                break;
+            }
+
+            // Find last space within width, or break at width
+            size_t break_at = width;
+            size_t last_space = text.rfind(' ', pos + width);
+            if (last_space != std::string::npos && last_space > pos) {
+                break_at = last_space - pos;
+            }
+
+            lines.push_back(text.substr(pos, break_at));
+            pos += break_at;
+
+            // Skip the space if we broke at one
+            if (pos < text.length() && text[pos] == ' ') {
+                pos++;
+            }
+        }
+
+        if (lines.empty()) {
+            lines.push_back("");
+        }
+        return lines;
+    };
+
+    // Helper to repeat a string
+    auto repeat = [](const std::string& s, size_t n) {
+        std::string result;
+        result.reserve(s.length() * n);
+        for (size_t i = 0; i < n; i++) {
+            result += s;
+        }
+        return result;
+    };
+
+    // Build the rendered table
+    std::string result;
+
+    // Top border
+    result += ansi(DIM) + "┌";
+    for (size_t i = 0; i < num_cols; i++) {
+        result += repeat("─", col_widths[i] + 2);
+        result += (i < num_cols - 1) ? "┬" : "┐";
+    }
+    result += ansi(RESET) + "\n";
+
+    // Render each row
+    for (size_t row_idx = 0; row_idx < rows.size(); row_idx++) {
+        const auto& row = rows[row_idx];
+        bool is_header = (separator_row == 1 && row_idx == 0);
+
+        // Wrap each cell's content
+        std::vector<std::vector<std::string>> wrapped_cells(num_cols);
+        size_t max_lines = 1;
+        for (size_t i = 0; i < num_cols; i++) {
+            std::string cell_content = (i < row.size()) ? row[i] : "";
+            wrapped_cells[i] = wrap_text(cell_content, col_widths[i]);
+            max_lines = std::max(max_lines, wrapped_cells[i].size());
+        }
+
+        // Render each line of the row
+        for (size_t line_idx = 0; line_idx < max_lines; line_idx++) {
+            result += ansi(DIM) + "│" + ansi(RESET);
+            for (size_t col = 0; col < num_cols; col++) {
+                std::string cell_line;
+                if (line_idx < wrapped_cells[col].size()) {
+                    cell_line = wrapped_cells[col][line_idx];
+                }
+
+                // Pad to column width
+                size_t padding = col_widths[col] - cell_line.length();
+                result += " ";
+                if (is_header) {
+                    result += ansi(BOLD);
+                }
+                result += cell_line;
+                if (is_header) {
+                    result += ansi(RESET);
+                }
+                result += std::string(padding, ' ');
+                result += " " + ansi(DIM) + "│" + ansi(RESET);
+            }
+            result += "\n";
+        }
+
+        // Draw separator after header or between rows
+        if (is_header || row_idx < rows.size() - 1) {
+            result += ansi(DIM);
+            result += (is_header) ? "├" : "├";
+            for (size_t i = 0; i < num_cols; i++) {
+                result += repeat(is_header ? "═" : "─", col_widths[i] + 2);
+                result += (i < num_cols - 1) ? (is_header ? "╪" : "┼") : (is_header ? "┤" : "┤");
+            }
+            result += ansi(RESET) + "\n";
+        }
+    }
+
+    // Bottom border
+    result += ansi(DIM) + "└";
+    for (size_t i = 0; i < num_cols; i++) {
+        result += repeat("─", col_widths[i] + 2);
+        result += (i < num_cols - 1) ? "┴" : "┘";
+    }
+    result += ansi(RESET) + "\n";
+
+    return result;
 }
 
 } // namespace rag
