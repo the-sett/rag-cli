@@ -1096,3 +1096,486 @@ TEST_CASE("Line-by-line rendering produces same output as batch", "[markdown][st
 
     REQUIRE(strip_ansi(batch_output.result) == strip_ansi(line_output.result));
 }
+
+// ============================================================================
+// Fine-grained incremental rendering tests
+// ============================================================================
+
+// Helper to count how many times render callback was called (for buffer-only mode)
+struct RenderCounter {
+    std::vector<std::string> renders;
+    void operator()(const std::string& s) {
+        renders.push_back(s);
+    }
+};
+
+TEST_CASE("Heading renders immediately after newline", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed heading without trailing content
+    renderer.feed("# Title\n");
+    // Should have rendered immediately (1 render for the heading)
+    REQUIRE(counter.renders.size() == 1);
+    REQUIRE(strip_ansi(counter.renders[0]).find("Title") != std::string::npos);
+
+    renderer.finish();
+}
+
+TEST_CASE("Thematic break renders immediately after newline", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    renderer.feed("---\n");
+    REQUIRE(counter.renders.size() == 1);
+    // Should contain the horizontal rule
+    REQUIRE(strip_ansi(counter.renders[0]).find("─") != std::string::npos);
+
+    renderer.finish();
+}
+
+TEST_CASE("Each list item renders when next item starts", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed first item - should NOT render yet (waiting for next item)
+    renderer.feed("* Item 1\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    // Feed second item - first item should render
+    renderer.feed("* Item 2\n");
+    REQUIRE(counter.renders.size() == 1);
+    REQUIRE(strip_ansi(counter.renders[0]).find("Item 1") != std::string::npos);
+
+    // Feed third item - second item should render
+    renderer.feed("* Item 3\n");
+    REQUIRE(counter.renders.size() == 2);
+    REQUIRE(strip_ansi(counter.renders[1]).find("Item 2") != std::string::npos);
+
+    // End list with non-list content
+    renderer.feed("Done.\n\n");
+    REQUIRE(counter.renders.size() >= 3);
+
+    renderer.finish();
+
+    // Verify all items present
+    std::string all_output;
+    for (const auto& s : counter.renders) {
+        all_output += s;
+    }
+    std::string stripped = strip_ansi(all_output);
+    REQUIRE(stripped.find("Item 1") != std::string::npos);
+    REQUIRE(stripped.find("Item 2") != std::string::npos);
+    REQUIRE(stripped.find("Item 3") != std::string::npos);
+}
+
+TEST_CASE("Code block renders after closing fence", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed opening fence - triggers state change, may output empty string
+    renderer.feed("```cpp\n");
+    size_t after_open = counter.renders.size();
+    // Opening fence may trigger a render call (with empty output) to set state
+
+    // Feed code - still waiting for closing fence
+    renderer.feed("int x = 5;\n");
+    REQUIRE(counter.renders.size() == after_open);
+
+    // Feed closing fence - NOW the code block renders
+    renderer.feed("```\n");
+    REQUIRE(counter.renders.size() == after_open + 1);
+
+    // Find the render that contains the code
+    bool found_code = false;
+    for (const auto& r : counter.renders) {
+        if (strip_ansi(r).find("int x = 5") != std::string::npos) {
+            found_code = true;
+            break;
+        }
+    }
+    REQUIRE(found_code);
+
+    renderer.finish();
+}
+
+TEST_CASE("Paragraph renders after blank line", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed paragraph text - should NOT render yet (waiting for blank line)
+    renderer.feed("This is a paragraph.\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    // Feed more text on same paragraph - still waiting
+    renderer.feed("More text.\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    // Feed blank line - NOW it renders
+    renderer.feed("\n");
+    REQUIRE(counter.renders.size() == 1);
+    REQUIRE(strip_ansi(counter.renders[0]).find("This is a paragraph") != std::string::npos);
+
+    renderer.finish();
+}
+
+TEST_CASE("Paragraph renders when followed by heading", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed paragraph
+    renderer.feed("Some text.\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    // Feed heading - paragraph should render, then heading
+    renderer.feed("# Heading\n");
+    REQUIRE(counter.renders.size() == 2);
+    REQUIRE(strip_ansi(counter.renders[0]).find("Some text") != std::string::npos);
+    REQUIRE(strip_ansi(counter.renders[1]).find("Heading") != std::string::npos);
+
+    renderer.finish();
+}
+
+TEST_CASE("Paragraph renders when followed by list", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed paragraph
+    renderer.feed("Introduction.\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    // Feed list item - paragraph should render, list item waits
+    renderer.feed("* Item\n");
+    REQUIRE(counter.renders.size() == 1);
+    REQUIRE(strip_ansi(counter.renders[0]).find("Introduction") != std::string::npos);
+
+    // End list
+    renderer.feed("\n");
+    renderer.finish();
+}
+
+TEST_CASE("Blockquote accumulates then renders", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed blockquote lines - should accumulate
+    renderer.feed("> Line 1\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    renderer.feed("> Line 2\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    // End blockquote with regular text
+    renderer.feed("Regular text.\n\n");
+    REQUIRE(counter.renders.size() >= 1);
+
+    renderer.finish();
+
+    std::string all_output;
+    for (const auto& s : counter.renders) {
+        all_output += s;
+    }
+    std::string stripped = strip_ansi(all_output);
+    REQUIRE(stripped.find("Line 1") != std::string::npos);
+    REQUIRE(stripped.find("Line 2") != std::string::npos);
+}
+
+TEST_CASE("Table accumulates rows then renders", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed table header - should accumulate
+    renderer.feed("| A | B |\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    renderer.feed("|---|---|\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    renderer.feed("| 1 | 2 |\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    // End table with non-table content
+    renderer.feed("Done.\n\n");
+    REQUIRE(counter.renders.size() >= 1);
+
+    renderer.finish();
+
+    std::string all_output;
+    for (const auto& s : counter.renders) {
+        all_output += s;
+    }
+    std::string stripped = strip_ansi(all_output);
+    REQUIRE(stripped.find("A") != std::string::npos);
+    REQUIRE(stripped.find("B") != std::string::npos);
+}
+
+TEST_CASE("Multiple headings render individually", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    renderer.feed("# First\n");
+    REQUIRE(counter.renders.size() == 1);
+    REQUIRE(strip_ansi(counter.renders[0]).find("First") != std::string::npos);
+
+    renderer.feed("## Second\n");
+    REQUIRE(counter.renders.size() == 2);
+    REQUIRE(strip_ansi(counter.renders[1]).find("Second") != std::string::npos);
+
+    renderer.feed("### Third\n");
+    REQUIRE(counter.renders.size() == 3);
+    REQUIRE(strip_ansi(counter.renders[2]).find("Third") != std::string::npos);
+
+    renderer.finish();
+}
+
+TEST_CASE("Heading levels 1-6 all detected", "[markdown][incremental]") {
+    for (int level = 1; level <= 6; level++) {
+        RenderCounter counter;
+        MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+        std::string heading = std::string(level, '#') + " Level " + std::to_string(level) + "\n";
+        renderer.feed(heading);
+        REQUIRE(counter.renders.size() == 1);
+
+        renderer.finish();
+    }
+}
+
+TEST_CASE("Seven hashes is not a heading", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // 7 # is not a valid heading, treated as paragraph
+    renderer.feed("####### Not a heading\n");
+    // Should not render immediately (paragraph waits for blank line)
+    REQUIRE(counter.renders.size() == 0);
+
+    renderer.feed("\n");
+    REQUIRE(counter.renders.size() == 1);
+
+    renderer.finish();
+}
+
+TEST_CASE("List item with code block renders together", "[markdown][incremental]") {
+    RenderCounter counter;
+    MarkdownRenderer renderer(std::ref(counter), true, -1);
+
+    // Feed a list item that contains a code block
+    renderer.feed("* Item with code:\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    renderer.feed("  ```\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    renderer.feed("  code here\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    renderer.feed("  ```\n");
+    REQUIRE(counter.renders.size() == 0);
+
+    // Next list item triggers render of first
+    renderer.feed("* Next item\n");
+    REQUIRE(counter.renders.size() == 1);
+
+    renderer.feed("\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(counter.renders[0]);
+    REQUIRE(stripped.find("Item with code") != std::string::npos);
+    REQUIRE(stripped.find("code here") != std::string::npos);
+}
+
+// ============================================================================
+// Blank line behavior tests
+// ============================================================================
+
+TEST_CASE("No double blank lines between heading and heading", "[markdown][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("# First\n## Second\n### Third\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Should never have two consecutive blank lines
+    REQUIRE(stripped.find("\n\n\n") == std::string::npos);
+
+    // All headings should be present
+    REQUIRE(stripped.find("First") != std::string::npos);
+    REQUIRE(stripped.find("Second") != std::string::npos);
+    REQUIRE(stripped.find("Third") != std::string::npos);
+}
+
+TEST_CASE("No double blank lines between code block and list", "[markdown][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("```\ncode\n```\n* Item\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Should never have two consecutive blank lines
+    REQUIRE(stripped.find("\n\n\n") == std::string::npos);
+
+    // Both code and list should be present
+    REQUIRE(stripped.find("code") != std::string::npos);
+    REQUIRE(stripped.find("Item") != std::string::npos);
+}
+
+TEST_CASE("Table has blank line before and after", "[markdown][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("Before.\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\nAfter.\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Find positions
+    size_t before_pos = stripped.find("Before.");
+    size_t table_start = stripped.find("┌");  // Box drawing for table
+    size_t table_end = stripped.rfind("┘");
+    size_t after_pos = stripped.find("After.");
+
+    REQUIRE(before_pos != std::string::npos);
+    REQUIRE(table_start != std::string::npos);
+    REQUIRE(table_end != std::string::npos);
+    REQUIRE(after_pos != std::string::npos);
+
+    // Check blank line before table
+    std::string between_before = stripped.substr(before_pos, table_start - before_pos);
+    REQUIRE(between_before.find("\n\n") != std::string::npos);
+
+    // Check blank line after table
+    std::string between_after = stripped.substr(table_end, after_pos - table_end);
+    REQUIRE(between_after.find("\n\n") != std::string::npos);
+}
+
+TEST_CASE("Blockquote has blank line before and after", "[markdown][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("Before.\n\n> Quote line\n\nAfter.\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    size_t before_pos = stripped.find("Before.");
+    size_t quote_pos = stripped.find("Quote");
+    size_t after_pos = stripped.find("After.");
+
+    REQUIRE(before_pos != std::string::npos);
+    REQUIRE(quote_pos != std::string::npos);
+    REQUIRE(after_pos != std::string::npos);
+
+    // Check blank line before blockquote
+    std::string between_before = stripped.substr(before_pos, quote_pos - before_pos);
+    REQUIRE(between_before.find("\n\n") != std::string::npos);
+
+    // Check blank line after blockquote
+    std::string between_after = stripped.substr(quote_pos, after_pos - quote_pos);
+    REQUIRE(between_after.find("\n\n") != std::string::npos);
+}
+
+TEST_CASE("Code block has blank line before and after", "[markdown][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("Before.\n\n```\ncode\n```\n\nAfter.\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    size_t before_pos = stripped.find("Before.");
+    size_t code_pos = stripped.find("code");
+    size_t after_pos = stripped.find("After.");
+
+    REQUIRE(before_pos != std::string::npos);
+    REQUIRE(code_pos != std::string::npos);
+    REQUIRE(after_pos != std::string::npos);
+
+    // Check blank line before code block
+    std::string between_before = stripped.substr(before_pos, code_pos - before_pos);
+    REQUIRE(between_before.find("\n\n") != std::string::npos);
+
+    // Check blank line after code block
+    std::string between_after = stripped.substr(code_pos, after_pos - code_pos);
+    REQUIRE(between_after.find("\n\n") != std::string::npos);
+}
+
+TEST_CASE("Heading has blank line before and after", "[markdown][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("Before text.\n\n# Title\nAfter text.\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    size_t before_pos = stripped.find("Before");
+    size_t title_pos = stripped.find("Title");
+    size_t after_pos = stripped.find("After");
+
+    REQUIRE(before_pos != std::string::npos);
+    REQUIRE(title_pos != std::string::npos);
+    REQUIRE(after_pos != std::string::npos);
+
+    // Check blank line before heading
+    std::string between_before = stripped.substr(before_pos, title_pos - before_pos);
+    REQUIRE(between_before.find("\n\n") != std::string::npos);
+
+    // Check blank line after heading
+    std::string between_after = stripped.substr(title_pos, after_pos - title_pos);
+    REQUIRE(between_after.find("\n\n") != std::string::npos);
+}
+
+TEST_CASE("Consecutive blocks merge blank lines", "[markdown][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    // Heading (needs blank after) followed by list (needs blank before)
+    // Should result in only ONE blank line between them
+    renderer.feed("# Title\n* Item\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Should never have three consecutive newlines (which would be two blank lines)
+    REQUIRE(stripped.find("\n\n\n") == std::string::npos);
+
+    // Both should be present with exactly one blank line between
+    size_t title_pos = stripped.find("Title");
+    size_t item_pos = stripped.find("Item");
+    REQUIRE(title_pos != std::string::npos);
+    REQUIRE(item_pos != std::string::npos);
+}
+
+TEST_CASE("Streaming list items share one blank line before", "[markdown][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    // Feed items incrementally
+    renderer.feed("Intro.\n\n");
+    renderer.feed("* Item 1\n");
+    renderer.feed("* Item 2\n");
+    renderer.feed("* Item 3\n");
+    renderer.feed("\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Count blank lines before the first bullet
+    size_t intro_end = stripped.find("Intro.") + 6;
+    size_t first_bullet = stripped.find("●");
+    std::string gap = stripped.substr(intro_end, first_bullet - intro_end);
+
+    // Should have exactly one blank line (two newlines)
+    size_t newline_count = 0;
+    for (char c : gap) {
+        if (c == '\n') newline_count++;
+    }
+    // One after "Intro." and one blank = 2 newlines before items
+    REQUIRE(newline_count == 2);
+}

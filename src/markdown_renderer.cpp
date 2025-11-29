@@ -102,6 +102,9 @@ void MarkdownRenderer::finish() {
     in_code_block_ = false;
     code_fence_length_ = 0;
     code_fence_chars_.clear();
+    code_fence_info_.clear();
+    needs_blank_before_next_ = false;
+    prev_was_list_item_ = false;
 }
 
 void MarkdownRenderer::output_raw(const std::string& text) {
@@ -349,6 +352,48 @@ bool MarkdownRenderer::is_list_item(const std::string& line) const {
     return false;
 }
 
+bool MarkdownRenderer::is_heading(const std::string& line) const {
+    // ATX headings: 1-6 # characters followed by space or end of line
+    // Up to 3 leading spaces allowed
+    size_t start = 0;
+    while (start < line.length() && start < 3 && line[start] == ' ') {
+        start++;
+    }
+
+    if (start >= line.length() || line[start] != '#') {
+        return false;
+    }
+
+    // Count # characters (1-6)
+    size_t hash_count = 0;
+    size_t i = start;
+    while (i < line.length() && line[i] == '#' && hash_count < 7) {
+        hash_count++;
+        i++;
+    }
+
+    if (hash_count < 1 || hash_count > 6) {
+        return false;
+    }
+
+    // Must be followed by space, tab, or end of line
+    if (i >= line.length()) {
+        return true;  // Just "###" is valid
+    }
+
+    return line[i] == ' ' || line[i] == '\t';
+}
+
+bool MarkdownRenderer::is_blockquote(const std::string& line) const {
+    // Blockquote: > at start (up to 3 leading spaces allowed)
+    size_t start = 0;
+    while (start < line.length() && start < 3 && line[start] == ' ') {
+        start++;
+    }
+
+    return start < line.length() && line[start] == '>';
+}
+
 bool MarkdownRenderer::has_complete_block() const {
     if (buffer_.empty()) {
         return false;
@@ -370,72 +415,117 @@ bool MarkdownRenderer::has_complete_block() const {
         return false;
     }
 
-    // Check if buffer starts with a code fence or table row
+    // Need at least one complete line to analyze
     size_t first_newline = buffer_.find('\n');
-    if (first_newline != std::string::npos) {
-        std::string first_line = buffer_.substr(0, first_newline);
-        size_t fence_len;
-        std::string fence_chars;
-        if (is_code_fence(first_line, fence_len, fence_chars)) {
-            // Starting a code block - don't have a complete block yet
-            return false;
-        }
-
-        // Check if buffer starts with a table row - scan to find end
-        if (is_table_row(first_line)) {
-            // Scan through the buffer to see if we have a complete table
-            size_t pos = first_newline + 1;
-            while (pos < buffer_.length()) {
-                size_t next_newline = buffer_.find('\n', pos);
-                if (next_newline == std::string::npos) {
-                    // No complete line yet, wait for more
-                    return false;
-                }
-                std::string line = buffer_.substr(pos, next_newline - pos);
-                if (!is_table_row(line)) {
-                    // Found non-table line, table is complete
-                    return true;
-                }
-                pos = next_newline + 1;
-            }
-            // All lines so far are table rows, wait for more
-            return false;
-        }
-
-        // Check if buffer starts with a list item - scan to find end
-        if (is_list_item(first_line)) {
-            // Scan through the buffer to see if we have a complete list
-            size_t pos = first_newline + 1;
-            while (pos < buffer_.length()) {
-                size_t next_newline = buffer_.find('\n', pos);
-                if (next_newline == std::string::npos) {
-                    // No complete line yet, wait for more
-                    return false;
-                }
-                std::string line = buffer_.substr(pos, next_newline - pos);
-                // List continues with: more list items, blank lines, or indented continuation
-                if (is_list_item(line) || line.empty() || (!line.empty() && line[0] == ' ')) {
-                    pos = next_newline + 1;
-                } else {
-                    // Found non-list line, list is complete
-                    return true;
-                }
-            }
-            // All lines so far are list content, wait for more
-            return false;
-        }
+    if (first_newline == std::string::npos) {
+        return false;
     }
 
-    // Look for paragraph breaks (blank line)
-    size_t blank_line = buffer_.find("\n\n");
-    if (blank_line != std::string::npos) {
+    std::string first_line = buffer_.substr(0, first_newline);
+
+    // Code fence: we have a "complete block" (the opening fence line) that needs to be processed
+    // to set state, but extract will return empty since actual code isn't ready yet
+    size_t fence_len;
+    std::string fence_chars;
+    if (is_code_fence(first_line, fence_len, fence_chars)) {
+        return true;  // Need to process this to set in_code_block_ state
+    }
+
+    // Heading: complete after single newline - render immediately
+    if (is_heading(first_line)) {
         return true;
     }
 
-    // Any complete line (ending with newline) can be rendered incrementally
-    size_t newline = buffer_.find('\n');
-    if (newline != std::string::npos) {
+    // Thematic break: complete after single newline - render immediately
+    if (is_thematic_break(first_line)) {
         return true;
+    }
+
+    // Table: accumulate all consecutive table rows, complete when non-table line appears
+    if (is_table_row(first_line)) {
+        size_t pos = first_newline + 1;
+        while (pos < buffer_.length()) {
+            size_t next_newline = buffer_.find('\n', pos);
+            if (next_newline == std::string::npos) {
+                return false;  // Wait for more input
+            }
+            std::string line = buffer_.substr(pos, next_newline - pos);
+            if (!is_table_row(line)) {
+                return true;  // Non-table line ends the table
+            }
+            pos = next_newline + 1;
+        }
+        return false;  // All lines are table rows, wait for terminator
+    }
+
+    // Blockquote: accumulate consecutive > lines, complete when non-blockquote line appears
+    if (is_blockquote(first_line)) {
+        size_t pos = first_newline + 1;
+        while (pos < buffer_.length()) {
+            size_t next_newline = buffer_.find('\n', pos);
+            if (next_newline == std::string::npos) {
+                return false;  // Wait for more input
+            }
+            std::string line = buffer_.substr(pos, next_newline - pos);
+            if (!is_blockquote(line) && !line.empty()) {
+                return true;  // Non-blockquote, non-empty line ends the blockquote
+            }
+            pos = next_newline + 1;
+        }
+        return false;  // All lines are blockquote, wait for terminator
+    }
+
+    // List item: complete when we see the NEXT list item or a non-list/non-continuation line
+    // This allows rendering each item individually
+    if (is_list_item(first_line)) {
+        size_t pos = first_newline + 1;
+        while (pos < buffer_.length()) {
+            size_t next_newline = buffer_.find('\n', pos);
+            if (next_newline == std::string::npos) {
+                return false;  // Wait for more input
+            }
+            std::string line = buffer_.substr(pos, next_newline - pos);
+
+            // If we see another list item, the FIRST item is complete
+            if (is_list_item(line)) {
+                return true;
+            }
+
+            // If we see a non-list, non-continuation line, the list item is complete
+            // Continuation lines start with spaces (indented content like code blocks)
+            // Empty lines can be part of loose lists
+            bool is_continuation = !line.empty() && (line[0] == ' ' || line[0] == '\t');
+            bool is_empty = line.empty();
+
+            if (!is_continuation && !is_empty) {
+                return true;  // Non-list content ends the item
+            }
+
+            pos = next_newline + 1;
+        }
+        return false;  // Wait for next item or terminator
+    }
+
+    // Paragraph: complete when we see a blank line OR the start of a different block type
+    // Check for blank line
+    if (buffer_.find("\n\n") != std::string::npos) {
+        return true;
+    }
+
+    // Check if a different block type starts after the first line
+    size_t pos = first_newline + 1;
+    if (pos < buffer_.length()) {
+        size_t next_newline = buffer_.find('\n', pos);
+        if (next_newline != std::string::npos) {
+            std::string next_line = buffer_.substr(pos, next_newline - pos);
+
+            // If next line starts a new block type, current paragraph is complete
+            if (is_heading(next_line) || is_thematic_break(next_line) ||
+                is_list_item(next_line) || is_blockquote(next_line) ||
+                is_table_row(next_line) || is_code_fence(next_line, fence_len, fence_chars)) {
+                return true;
+            }
+        }
     }
 
     return false;
@@ -451,98 +541,179 @@ std::string MarkdownRenderer::extract_complete_block() {
 
             std::string line = buffer_.substr(line_start, pos - line_start);
             if (is_closing_fence(line)) {
-                // Include the closing fence line
-                std::string block = buffer_.substr(0, pos + 1);
+                // Reconstruct opening fence and include content up to closing fence
+                std::string opening_fence = code_fence_chars_;
+                if (!code_fence_info_.empty()) {
+                    opening_fence += code_fence_info_;
+                }
+                opening_fence += "\n";
+
+                std::string content = buffer_.substr(0, pos + 1);
                 buffer_.erase(0, pos + 1);
+
                 in_code_block_ = false;
                 code_fence_length_ = 0;
                 code_fence_chars_.clear();
-                return block;
+                code_fence_info_.clear();
+
+                return opening_fence + content;
             }
             pos++;
         }
+        return "";
     }
 
-    // Check for code fence or table start
     size_t first_newline = buffer_.find('\n');
-    if (first_newline != std::string::npos) {
-        std::string first_line = buffer_.substr(0, first_newline);
-        size_t fence_len;
-        std::string fence_chars;
-        if (is_code_fence(first_line, fence_len, fence_chars)) {
-            in_code_block_ = true;
-            code_fence_length_ = fence_len;
-            code_fence_chars_ = fence_chars;
-            // Don't extract yet - wait for closing fence
-            return "";
-        }
-
-        // Check for table - extract all consecutive table rows
-        if (is_table_row(first_line)) {
-            size_t last_table_row_end = first_newline;
-            size_t pos = first_newline + 1;
-
-            while (pos < buffer_.length()) {
-                size_t next_newline = buffer_.find('\n', pos);
-                if (next_newline == std::string::npos) {
-                    // Incomplete line, shouldn't happen since has_complete_block passed
-                    break;
-                }
-                std::string line = buffer_.substr(pos, next_newline - pos);
-                if (is_table_row(line)) {
-                    last_table_row_end = next_newline;
-                    pos = next_newline + 1;
-                } else {
-                    // Non-table line - extract the table
-                    break;
-                }
-            }
-
-            std::string block = buffer_.substr(0, last_table_row_end + 1);
-            buffer_.erase(0, last_table_row_end + 1);
-            return block;
-        }
-
-        // Check for list - extract all consecutive list content
-        if (is_list_item(first_line)) {
-            size_t last_list_end = first_newline;
-            size_t pos = first_newline + 1;
-
-            while (pos < buffer_.length()) {
-                size_t next_newline = buffer_.find('\n', pos);
-                if (next_newline == std::string::npos) {
-                    break;
-                }
-                std::string line = buffer_.substr(pos, next_newline - pos);
-                // List continues with: more list items, blank lines, or indented continuation
-                if (is_list_item(line) || line.empty() || (!line.empty() && line[0] == ' ')) {
-                    last_list_end = next_newline;
-                    pos = next_newline + 1;
-                } else {
-                    break;
-                }
-            }
-
-            std::string block = buffer_.substr(0, last_list_end + 1);
-            buffer_.erase(0, last_list_end + 1);
-            return block;
-        }
+    if (first_newline == std::string::npos) {
+        return "";
     }
 
-    // Check for blank line (paragraph separator)
+    std::string first_line = buffer_.substr(0, first_newline);
+
+    // Code fence: consume the opening fence line, set state, wait for closing fence
+    size_t fence_len;
+    std::string fence_chars;
+    if (is_code_fence(first_line, fence_len, fence_chars)) {
+        in_code_block_ = true;
+        code_fence_length_ = fence_len;
+        code_fence_chars_ = fence_chars;
+        // Extract info string (language) after the fence characters
+        size_t fence_end = first_line.find(fence_chars[0]);
+        while (fence_end < first_line.length() && first_line[fence_end] == fence_chars[0]) {
+            fence_end++;
+        }
+        // Skip whitespace after fence
+        while (fence_end < first_line.length() && (first_line[fence_end] == ' ' || first_line[fence_end] == '\t')) {
+            fence_end++;
+        }
+        code_fence_info_ = (fence_end < first_line.length()) ? first_line.substr(fence_end) : "";
+        // Remove the opening fence from buffer - we'll reconstruct it when extracting
+        buffer_.erase(0, first_newline + 1);
+        return "";
+    }
+
+    // Heading: extract single line
+    if (is_heading(first_line)) {
+        std::string block = buffer_.substr(0, first_newline + 1);
+        buffer_.erase(0, first_newline + 1);
+        return block;
+    }
+
+    // Thematic break: extract single line
+    if (is_thematic_break(first_line)) {
+        std::string block = buffer_.substr(0, first_newline + 1);
+        buffer_.erase(0, first_newline + 1);
+        return block;
+    }
+
+    // Table: extract all consecutive table rows
+    if (is_table_row(first_line)) {
+        size_t last_table_row_end = first_newline;
+        size_t pos = first_newline + 1;
+
+        while (pos < buffer_.length()) {
+            size_t next_newline = buffer_.find('\n', pos);
+            if (next_newline == std::string::npos) {
+                break;
+            }
+            std::string line = buffer_.substr(pos, next_newline - pos);
+            if (is_table_row(line)) {
+                last_table_row_end = next_newline;
+                pos = next_newline + 1;
+            } else {
+                break;
+            }
+        }
+
+        std::string block = buffer_.substr(0, last_table_row_end + 1);
+        buffer_.erase(0, last_table_row_end + 1);
+        return block;
+    }
+
+    // Blockquote: extract all consecutive blockquote lines
+    if (is_blockquote(first_line)) {
+        size_t last_quote_end = first_newline;
+        size_t pos = first_newline + 1;
+
+        while (pos < buffer_.length()) {
+            size_t next_newline = buffer_.find('\n', pos);
+            if (next_newline == std::string::npos) {
+                break;
+            }
+            std::string line = buffer_.substr(pos, next_newline - pos);
+            // Include empty lines and continuation blockquote lines
+            if (is_blockquote(line) || line.empty()) {
+                last_quote_end = next_newline;
+                pos = next_newline + 1;
+            } else {
+                break;
+            }
+        }
+
+        std::string block = buffer_.substr(0, last_quote_end + 1);
+        buffer_.erase(0, last_quote_end + 1);
+        return block;
+    }
+
+    // List item: extract just the first item (until next list item or non-continuation)
+    if (is_list_item(first_line)) {
+        size_t item_end = first_newline;
+        size_t pos = first_newline + 1;
+
+        while (pos < buffer_.length()) {
+            size_t next_newline = buffer_.find('\n', pos);
+            if (next_newline == std::string::npos) {
+                break;
+            }
+            std::string line = buffer_.substr(pos, next_newline - pos);
+
+            // If we see another list item, stop - that's the next item
+            if (is_list_item(line)) {
+                break;
+            }
+
+            // Continuation lines (indented) or empty lines belong to this item
+            bool is_continuation = !line.empty() && (line[0] == ' ' || line[0] == '\t');
+            bool is_empty = line.empty();
+
+            if (is_continuation || is_empty) {
+                item_end = next_newline;
+                pos = next_newline + 1;
+            } else {
+                break;  // Non-list content ends the item
+            }
+        }
+
+        std::string block = buffer_.substr(0, item_end + 1);
+        buffer_.erase(0, item_end + 1);
+        return block;
+    }
+
+    // Paragraph: extract until blank line or start of different block type
     size_t blank_line = buffer_.find("\n\n");
     if (blank_line != std::string::npos) {
+        // Extract up to and including the blank line
         std::string block = buffer_.substr(0, blank_line + 2);
         buffer_.erase(0, blank_line + 2);
         return block;
     }
 
-    // Extract any complete line for incremental rendering
-    size_t newline = buffer_.find('\n');
-    if (newline != std::string::npos) {
-        std::string block = buffer_.substr(0, newline + 1);
-        buffer_.erase(0, newline + 1);
-        return block;
+    // Check if different block type starts after first line
+    size_t pos = first_newline + 1;
+    if (pos < buffer_.length()) {
+        size_t next_newline = buffer_.find('\n', pos);
+        if (next_newline != std::string::npos) {
+            std::string next_line = buffer_.substr(pos, next_newline - pos);
+
+            if (is_heading(next_line) || is_thematic_break(next_line) ||
+                is_list_item(next_line) || is_blockquote(next_line) ||
+                is_table_row(next_line) || is_code_fence(next_line, fence_len, fence_chars)) {
+                // Extract just the first line (paragraph before new block)
+                std::string block = buffer_.substr(0, first_newline + 1);
+                buffer_.erase(0, first_newline + 1);
+                return block;
+            }
+        }
     }
 
     return "";
@@ -553,224 +724,287 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
         return "";
     }
 
-    // Check if this is a table (starts with |)
+    // Determine block type for blank line handling
+    // Blocks needing blank BEFORE: list, table, blockquote, code block
+    // Blocks needing blank AFTER: list, table, heading, blockquote, code block
+    bool is_table_block = false;
+    bool is_list_block = false;
+    bool is_blockquote_block = false;
+    bool is_code_block_type = false;
+    bool is_heading_block = false;
+
     size_t first_non_space = markdown.find_first_not_of(" \n");
-    if (first_non_space != std::string::npos && markdown[first_non_space] == '|') {
-        return render_table(markdown);
-    }
+    if (first_non_space != std::string::npos) {
+        std::string first_line = markdown.substr(first_non_space);
+        size_t nl = first_line.find('\n');
+        if (nl != std::string::npos) {
+            first_line = first_line.substr(0, nl);
+        }
 
-    cmark_node* doc = cmark_parse_document(
-        markdown.c_str(),
-        markdown.length(),
-        CMARK_OPT_DEFAULT
-    );
-
-    if (!doc) {
-        return markdown;  // Fallback to raw text
-    }
-
-    std::string result;
-    cmark_iter* iter = cmark_iter_new(doc);
-    cmark_event_type ev_type;
-
-    bool in_list = false;
-    bool in_ordered_list = false;
-    int list_item_number = 0;
-    int list_indent = 0;
-    std::string current_indent;  // Indent string for nested content
-
-    while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
-        cmark_node* cur = cmark_iter_get_node(iter);
-        cmark_node_type type = cmark_node_get_type(cur);
-        bool entering = (ev_type == CMARK_EVENT_ENTER);
-
-        switch (type) {
-            case CMARK_NODE_DOCUMENT:
-                // Ignore document node
-                break;
-
-            case CMARK_NODE_HEADING: {
-                if (entering) {
-                    int level = cmark_node_get_heading_level(cur);
-                    std::string text = collect_text(cur);
-                    result += heading(text, level);
-                    // Skip children since we collected the text
-                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
-                }
-                break;
+        if (markdown[first_non_space] == '|') {
+            is_table_block = true;
+        } else if (is_list_item(first_line)) {
+            is_list_block = true;
+        } else if (is_blockquote(first_line)) {
+            is_blockquote_block = true;
+        } else if (is_heading(first_line)) {
+            is_heading_block = true;
+        } else {
+            // Check for code fence
+            size_t fence_len;
+            std::string fence_chars;
+            if (is_code_fence(first_line, fence_len, fence_chars)) {
+                is_code_block_type = true;
             }
-
-            case CMARK_NODE_PARAGRAPH:
-                if (!entering) {
-                    result += "\n";
-                }
-                break;
-
-            case CMARK_NODE_TEXT: {
-                if (entering) {
-                    const char* text = cmark_node_get_literal(cur);
-                    if (text) {
-                        result += text;
-                    }
-                }
-                break;
-            }
-
-            case CMARK_NODE_SOFTBREAK:
-                result += " ";
-                break;
-
-            case CMARK_NODE_LINEBREAK:
-                result += "\n";
-                break;
-
-            case CMARK_NODE_CODE: {
-                if (entering) {
-                    const char* literal = cmark_node_get_literal(cur);
-                    result += code(literal ? literal : "");
-                }
-                break;
-            }
-
-            case CMARK_NODE_CODE_BLOCK: {
-                if (entering) {
-                    const char* info = cmark_node_get_fence_info(cur);
-                    const char* literal = cmark_node_get_literal(cur);
-                    std::string block = code_block(literal ? literal : "", info ? info : "");
-                    // Apply current indent to each line of the code block
-                    if (!current_indent.empty()) {
-                        std::string indented;
-                        std::istringstream stream(block);
-                        std::string line;
-                        while (std::getline(stream, line)) {
-                            indented += current_indent + line + "\n";
-                        }
-                        result += indented;
-                    } else {
-                        result += block;
-                    }
-                }
-                break;
-            }
-
-            case CMARK_NODE_STRONG: {
-                if (entering) {
-                    std::string text = collect_text(cur);
-                    result += bold(text);
-                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
-                }
-                break;
-            }
-
-            case CMARK_NODE_EMPH: {
-                if (entering) {
-                    std::string text = collect_text(cur);
-                    result += italic(text);
-                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
-                }
-                break;
-            }
-
-            case CMARK_NODE_LINK: {
-                if (entering) {
-                    std::string text = collect_text(cur);
-                    const char* url = cmark_node_get_url(cur);
-                    result += link(text, url ? url : "");
-                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
-                }
-                break;
-            }
-
-            case CMARK_NODE_IMAGE: {
-                if (entering) {
-                    std::string alt = collect_text(cur);
-                    const char* url = cmark_node_get_url(cur);
-                    result += ansi(DIM) + "[image: " + alt + "]" + ansi(RESET);
-                    if (url && strlen(url) > 0) {
-                        result += " " + ansi(UNDERLINE) + ansi(BLUE) + url + ansi(RESET);
-                    }
-                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
-                }
-                break;
-            }
-
-            case CMARK_NODE_LIST: {
-                if (entering) {
-                    // Blank line before list
-                    result += "\n";
-                    in_list = true;
-                    in_ordered_list = (cmark_node_get_list_type(cur) == CMARK_ORDERED_LIST);
-                    list_item_number = cmark_node_get_list_start(cur);
-                    list_indent = 0;
-                } else {
-                    in_list = false;
-                    // Blank line after list
-                    result += "\n";
-                }
-                break;
-            }
-
-            case CMARK_NODE_ITEM: {
-                if (entering) {
-                    // Output the list marker, content will follow from children
-                    std::string prefix = "  " + std::string(list_indent * 2, ' ');
-                    if (in_ordered_list) {
-                        prefix += std::to_string(list_item_number) + ". ";
-                        list_item_number++;
-                    } else {
-                        prefix += ansi(CYAN) + "●" + ansi(RESET) + " ";
-                    }
-                    result += prefix;
-                    // Set indent for nested content (code blocks, etc.)
-                    // "  " base + list_indent + "   " for content alignment (past the marker)
-                    current_indent = "  " + std::string(list_indent * 2, ' ') + "   ";
-                } else {
-                    current_indent.clear();
-                }
-                // Don't skip children - let them be processed naturally
-                break;
-            }
-
-            case CMARK_NODE_BLOCK_QUOTE: {
-                if (entering) {
-                    // Collect all text in the blockquote
-                    std::string quote_text = collect_text(cur);
-                    std::istringstream stream(quote_text);
-                    std::string line;
-                    while (std::getline(stream, line)) {
-                        result += blockquote_line(line);
-                    }
-                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
-                }
-                break;
-            }
-
-            case CMARK_NODE_THEMATIC_BREAK: {
-                if (entering) {
-                    result += horizontal_rule();
-                }
-                break;
-            }
-
-            case CMARK_NODE_HTML_BLOCK:
-            case CMARK_NODE_HTML_INLINE: {
-                if (entering) {
-                    const char* html = cmark_node_get_literal(cur);
-                    if (html) {
-                        result += ansi(DIM) + html + ansi(RESET);
-                    }
-                }
-                break;
-            }
-
-            default:
-                // Other node types - just pass through
-                break;
         }
     }
 
-    cmark_iter_free(iter);
-    cmark_node_free(doc);
+    // Determine if this block needs blank before/after
+    // Special case: consecutive list items don't need blank lines between them
+    bool is_continuing_list = is_list_block && prev_was_list_item_;
+
+    bool needs_blank_before = (is_list_block || is_table_block || is_blockquote_block || is_code_block_type || is_heading_block) && !is_continuing_list;
+    bool needs_blank_after = is_list_block || is_table_block || is_heading_block || is_blockquote_block || is_code_block_type;
+
+    // Build result with proper blank line handling
+    std::string result;
+
+    // Add blank line before if needed (merging with previous block's blank-after)
+    // But don't add if this is a continuation of a list sequence
+    if ((needs_blank_before || needs_blank_before_next_) && !is_continuing_list) {
+        result += "\n";
+    }
+    // Reset the flag - we've handled the blank line (either by adding one or not needing one)
+    needs_blank_before_next_ = false;
+
+    // Render the content
+    if (is_table_block) {
+        result += render_table(markdown);
+    } else {
+        // Use cmark for other block types
+        cmark_node* doc = cmark_parse_document(
+            markdown.c_str(),
+            markdown.length(),
+            CMARK_OPT_DEFAULT
+        );
+
+        if (!doc) {
+            result += markdown;  // Fallback to raw text
+        } else {
+            cmark_iter* iter = cmark_iter_new(doc);
+            cmark_event_type ev_type;
+
+            bool in_list = false;
+            bool in_ordered_list = false;
+            int list_item_number = 0;
+            int list_indent = 0;
+            std::string current_indent;  // Indent string for nested content
+
+            while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
+                cmark_node* cur = cmark_iter_get_node(iter);
+                cmark_node_type type = cmark_node_get_type(cur);
+                bool entering = (ev_type == CMARK_EVENT_ENTER);
+
+                switch (type) {
+                    case CMARK_NODE_DOCUMENT:
+                        // Ignore document node
+                        break;
+
+                    case CMARK_NODE_HEADING: {
+                        if (entering) {
+                            int level = cmark_node_get_heading_level(cur);
+                            std::string text = collect_text(cur);
+                            result += heading(text, level);
+                            // Skip children since we collected the text
+                            cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_PARAGRAPH:
+                        if (!entering) {
+                            result += "\n";
+                        }
+                        break;
+
+                    case CMARK_NODE_TEXT: {
+                        if (entering) {
+                            const char* text = cmark_node_get_literal(cur);
+                            if (text) {
+                                result += text;
+                            }
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_SOFTBREAK:
+                        result += " ";
+                        break;
+
+                    case CMARK_NODE_LINEBREAK:
+                        result += "\n";
+                        break;
+
+                    case CMARK_NODE_CODE: {
+                        if (entering) {
+                            const char* literal = cmark_node_get_literal(cur);
+                            result += code(literal ? literal : "");
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_CODE_BLOCK: {
+                        if (entering) {
+                            const char* info = cmark_node_get_fence_info(cur);
+                            const char* literal = cmark_node_get_literal(cur);
+                            std::string block = code_block(literal ? literal : "", info ? info : "");
+                            // Apply current indent to each line of the code block
+                            if (!current_indent.empty()) {
+                                std::string indented;
+                                std::istringstream stream(block);
+                                std::string line;
+                                while (std::getline(stream, line)) {
+                                    indented += current_indent + line + "\n";
+                                }
+                                result += indented;
+                            } else {
+                                result += block;
+                            }
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_STRONG: {
+                        if (entering) {
+                            std::string text = collect_text(cur);
+                            result += bold(text);
+                            cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_EMPH: {
+                        if (entering) {
+                            std::string text = collect_text(cur);
+                            result += italic(text);
+                            cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_LINK: {
+                        if (entering) {
+                            std::string text = collect_text(cur);
+                            const char* url = cmark_node_get_url(cur);
+                            result += link(text, url ? url : "");
+                            cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_IMAGE: {
+                        if (entering) {
+                            std::string alt = collect_text(cur);
+                            const char* url = cmark_node_get_url(cur);
+                            result += ansi(DIM) + "[image: " + alt + "]" + ansi(RESET);
+                            if (url && strlen(url) > 0) {
+                                result += " " + ansi(UNDERLINE) + ansi(BLUE) + url + ansi(RESET);
+                            }
+                            cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_LIST: {
+                        if (entering) {
+                            // No blank line here - handled at the block level
+                            in_list = true;
+                            in_ordered_list = (cmark_node_get_list_type(cur) == CMARK_ORDERED_LIST);
+                            list_item_number = cmark_node_get_list_start(cur);
+                            list_indent = 0;
+                        } else {
+                            in_list = false;
+                            // No blank line here - handled at the block level
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_ITEM: {
+                        if (entering) {
+                            // Output the list marker, content will follow from children
+                            std::string prefix = "  " + std::string(list_indent * 2, ' ');
+                            if (in_ordered_list) {
+                                prefix += std::to_string(list_item_number) + ". ";
+                                list_item_number++;
+                            } else {
+                                prefix += ansi(CYAN) + "●" + ansi(RESET) + " ";
+                            }
+                            result += prefix;
+                            // Set indent for nested content (code blocks, etc.)
+                            // "  " base + list_indent + "   " for content alignment (past the marker)
+                            current_indent = "  " + std::string(list_indent * 2, ' ') + "   ";
+                        } else {
+                            current_indent.clear();
+                        }
+                        // Don't skip children - let them be processed naturally
+                        break;
+                    }
+
+                    case CMARK_NODE_BLOCK_QUOTE: {
+                        if (entering) {
+                            // Collect all text in the blockquote
+                            std::string quote_text = collect_text(cur);
+                            std::istringstream stream(quote_text);
+                            std::string line;
+                            while (std::getline(stream, line)) {
+                                result += blockquote_line(line);
+                            }
+                            cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_THEMATIC_BREAK: {
+                        if (entering) {
+                            result += horizontal_rule();
+                        }
+                        break;
+                    }
+
+                    case CMARK_NODE_HTML_BLOCK:
+                    case CMARK_NODE_HTML_INLINE: {
+                        if (entering) {
+                            const char* html = cmark_node_get_literal(cur);
+                            if (html) {
+                                result += ansi(DIM) + html + ansi(RESET);
+                            }
+                        }
+                        break;
+                    }
+
+                    default:
+                        // Other node types - just pass through
+                        break;
+                }
+            }
+
+            cmark_iter_free(iter);
+            cmark_node_free(doc);
+        }
+    }
+
+    // Set flag for next block if this block needs blank after
+    if (needs_blank_after) {
+        needs_blank_before_next_ = true;
+    }
+
+    // Special case: if we just transitioned OUT of a list, the blank-after was already
+    // set by the last list item, so that's correct. But if we're still IN a list sequence,
+    // we don't want blank lines between items, so we need to suppress the flag.
+    // The flag will be set correctly when we finally exit the list.
+
+    // Track list item sequences
+    prev_was_list_item_ = is_list_block;
 
     return result;
 }

@@ -71,6 +71,14 @@ private:
     bool in_code_block_ = false;
     std::string code_fence_chars_;  // ``` or ~~~
     size_t code_fence_length_ = 0;
+    std::string code_fence_info_;   // Language/info string after opening fence
+
+    // Blank line management between blocks
+    // When a block needs blank-after and next needs blank-before, merge to one blank line
+    bool needs_blank_before_next_ = false;
+
+    // Track if previous block was a list item (for streaming list item sequences)
+    bool prev_was_list_item_ = false;
 
     // Block detection and extraction
     bool has_complete_block() const;
@@ -80,6 +88,8 @@ private:
     bool is_table_row(const std::string& line) const;
     bool is_table_separator(const std::string& line) const;
     bool is_list_item(const std::string& line) const;
+    bool is_heading(const std::string& line) const;
+    bool is_blockquote(const std::string& line) const;
 
     // Hybrid streaming output
     void output_raw(const std::string& text);
