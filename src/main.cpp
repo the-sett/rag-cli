@@ -5,6 +5,7 @@
 #include "openai_client.hpp"
 #include "vector_store.hpp"
 #include "chat.hpp"
+#include "markdown_renderer.hpp"
 
 #include <CLI/CLI.hpp>
 #include <iostream>
@@ -220,6 +221,10 @@ int main(int argc, char* argv[]) {
     app.add_flag("-n,--non-interactive", non_interactive,
                  "Non-interactive mode: read query from stdin, write response to stdout, exit");
 
+    bool plain_output = false;
+    app.add_flag("--plain", plain_output,
+                 "Disable markdown rendering, output raw text");
+
     CLI11_PARSE(app, argc, argv);
 
     Console console;
@@ -271,6 +276,10 @@ int main(int argc, char* argv[]) {
     // Create chat session
     ChatSession chat(system_prompt, LOG_DIR);
 
+    // Determine if we should render markdown
+    // Markdown rendering: enabled for interactive mode without --plain
+    bool render_markdown = !non_interactive && !plain_output;
+
     // Process a single query
     auto process_query = [&](const std::string& user_input) {
         chat.add_user_message(user_input);
@@ -278,21 +287,43 @@ int main(int argc, char* argv[]) {
         std::string streamed_text;
 
         try {
-            client.stream_response(
-                settings.model,
-                chat.get_conversation(),
-                settings.vector_store_id,
-                reasoning_effort,
-                [&](const std::string& delta) {
-                    if (non_interactive) {
-                        std::cout << delta << std::flush;
-                    } else {
-                        console.print_raw(delta);
-                        console.flush();
+            if (render_markdown) {
+                // Use markdown renderer for interactive mode
+                MarkdownRenderer renderer([&](const std::string& formatted) {
+                    console.print_raw(formatted);
+                    console.flush();
+                });
+
+                client.stream_response(
+                    settings.model,
+                    chat.get_conversation(),
+                    settings.vector_store_id,
+                    reasoning_effort,
+                    [&](const std::string& delta) {
+                        renderer.feed(delta);
+                        streamed_text += delta;
                     }
-                    streamed_text += delta;
-                }
-            );
+                );
+
+                renderer.finish();
+            } else {
+                // Raw output for non-interactive or --plain mode
+                client.stream_response(
+                    settings.model,
+                    chat.get_conversation(),
+                    settings.vector_store_id,
+                    reasoning_effort,
+                    [&](const std::string& delta) {
+                        if (non_interactive) {
+                            std::cout << delta << std::flush;
+                        } else {
+                            console.print_raw(delta);
+                            console.flush();
+                        }
+                        streamed_text += delta;
+                    }
+                );
+            }
         } catch (const std::exception& e) {
             console.println();
             console.print_error("Error: " + std::string(e.what()));
