@@ -34,6 +34,17 @@ public:
     std::string get_batch_status(const std::string& vector_store_id,
                                   const std::string& batch_id);
 
+    // Add a single file to an existing vector store
+    void add_file_to_vector_store(const std::string& vector_store_id,
+                                   const std::string& file_id);
+
+    // Remove a file from a vector store (does not delete the file itself)
+    void remove_file_from_vector_store(const std::string& vector_store_id,
+                                        const std::string& file_id);
+
+    // Delete a file from OpenAI storage
+    void delete_file(const std::string& file_id);
+
     // Responses API with streaming
     // on_text callback is called for each text delta
     void stream_response(
@@ -56,6 +67,7 @@ private:
     void http_post_stream(const std::string& url,
                           const nlohmann::json& body,
                           std::function<void(const std::string&)> on_data);
+    std::string http_delete(const std::string& url);
 };
 
 } // namespace rag

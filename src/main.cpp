@@ -99,9 +99,47 @@ Settings load_or_create_settings(
     Console& console
 ) {
     auto existing = load_settings();
-    bool needs_setup = reindex || !existing.has_value() || !existing->is_valid();
+    bool has_valid_settings = existing.has_value() && existing->is_valid();
 
-    if (!needs_setup) {
+    // If reindex is requested with existing valid settings, do incremental update
+    if (reindex && has_valid_settings) {
+        Settings settings = *existing;
+
+        // Use new file patterns if provided, otherwise use stored patterns
+        std::vector<std::string> patterns_to_use = files.empty() ? settings.file_patterns : files;
+
+        if (patterns_to_use.empty()) {
+            console.print_error("Error: No file patterns available for reindex");
+            console.println("Provide file patterns or ensure .crag.json has stored patterns.");
+            std::exit(1);
+        }
+
+        // Update patterns if new ones were provided
+        if (!files.empty()) {
+            settings.file_patterns = files;
+        }
+
+        // Resolve current files from patterns
+        std::vector<std::string> current_files = resolve_file_patterns(patterns_to_use, console);
+
+        if (current_files.empty()) {
+            console.print_error("Error: No supported files found");
+            std::exit(1);
+        }
+
+        // Compute diff
+        FileDiff diff = compute_file_diff(current_files, settings.indexed_files);
+
+        // Apply incremental updates
+        update_vector_store(settings.vector_store_id, diff, client, console, settings.indexed_files);
+
+        // Save updated settings
+        save_settings(settings);
+        return settings;
+    }
+
+    // No reindex requested and we have valid settings - just use them
+    if (!reindex && has_valid_settings) {
         if (!non_interactive) {
             console.print_colored("Using model: ", ansi::GREEN);
             console.println(existing->model);
@@ -120,11 +158,13 @@ Settings load_or_create_settings(
                 }
                 console.println(patterns);
             }
+            console.print_colored("Indexed files: ", ansi::GREEN);
+            console.println(std::to_string(existing->indexed_files.size()));
         }
         return *existing;
     }
 
-    // Check if file patterns are provided
+    // First time setup - need file patterns
     if (files.empty()) {
         console.print_error("Error: No files specified for indexing");
         console.println();
@@ -139,12 +179,12 @@ Settings load_or_create_settings(
         std::exit(1);
     }
 
-    // First time or reindex - select model, reasoning, and create vector store
+    // First time - select model, reasoning, and create vector store
     Settings settings;
     settings.model = select_model(client, console);
     settings.reasoning_effort = select_reasoning_effort(console);
     settings.file_patterns = files;
-    settings.vector_store_id = create_vector_store(files, client, console);
+    settings.vector_store_id = create_vector_store(files, client, console, settings.indexed_files);
 
     if (settings.vector_store_id.empty()) {
         std::exit(1);

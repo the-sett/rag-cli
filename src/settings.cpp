@@ -35,6 +35,15 @@ std::optional<Settings> load_settings() {
             }
         }
 
+        if (j.contains("indexed_files") && j["indexed_files"].is_object()) {
+            for (const auto& [filepath, metadata] : j["indexed_files"].items()) {
+                FileMetadata fm;
+                fm.openai_file_id = metadata.value("openai_file_id", "");
+                fm.last_modified = metadata.value("last_modified", int64_t(0));
+                settings.indexed_files[filepath] = fm;
+            }
+        }
+
         return settings;
     } catch (const json::exception&) {
         return std::nullopt;
@@ -47,6 +56,15 @@ void save_settings(const Settings& settings) {
     j["reasoning_effort"] = settings.reasoning_effort;
     j["vector_store_id"] = settings.vector_store_id;
     j["file_patterns"] = settings.file_patterns;
+
+    json indexed_files_json = json::object();
+    for (const auto& [filepath, metadata] : settings.indexed_files) {
+        indexed_files_json[filepath] = {
+            {"openai_file_id", metadata.openai_file_id},
+            {"last_modified", metadata.last_modified}
+        };
+    }
+    j["indexed_files"] = indexed_files_json;
 
     std::ofstream file(SETTINGS_FILE);
     if (file.is_open()) {

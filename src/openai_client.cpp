@@ -270,6 +270,71 @@ std::string OpenAIClient::get_batch_status(const std::string& vector_store_id,
     return j.value("status", "unknown");
 }
 
+std::string OpenAIClient::http_delete(const std::string& url) {
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        throw std::runtime_error("Failed to initialize CURL");
+    }
+
+    std::string response;
+    struct curl_slist* headers = nullptr;
+    std::string auth_header = "Authorization: Bearer " + api_key_;
+    headers = curl_slist_append(headers, auth_header.c_str());
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    CURLcode res = curl_easy_perform(curl);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        throw std::runtime_error(std::string("HTTP DELETE failed: ") + curl_easy_strerror(res));
+    }
+
+    return response;
+}
+
+void OpenAIClient::add_file_to_vector_store(const std::string& vector_store_id,
+                                             const std::string& file_id) {
+    std::string url = std::string(OPENAI_API_BASE) + "/vector_stores/" + vector_store_id + "/files";
+    json body = {{"file_id", file_id}};
+
+    std::string response = http_post_json(url, body);
+    json j = json::parse(response);
+
+    if (j.contains("error")) {
+        throw std::runtime_error("Failed to add file to vector store: " + j["error"]["message"].get<std::string>());
+    }
+}
+
+void OpenAIClient::remove_file_from_vector_store(const std::string& vector_store_id,
+                                                  const std::string& file_id) {
+    std::string url = std::string(OPENAI_API_BASE) + "/vector_stores/" + vector_store_id + "/files/" + file_id;
+
+    std::string response = http_delete(url);
+    json j = json::parse(response);
+
+    if (j.contains("error")) {
+        throw std::runtime_error("Failed to remove file from vector store: " + j["error"]["message"].get<std::string>());
+    }
+}
+
+void OpenAIClient::delete_file(const std::string& file_id) {
+    std::string url = std::string(OPENAI_API_BASE) + "/files/" + file_id;
+
+    std::string response = http_delete(url);
+    json j = json::parse(response);
+
+    if (j.contains("error")) {
+        throw std::runtime_error("Failed to delete file: " + j["error"]["message"].get<std::string>());
+    }
+}
+
 void OpenAIClient::stream_response(
     const std::string& model,
     const std::vector<Message>& conversation,

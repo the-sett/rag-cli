@@ -1,3 +1,4 @@
 .crag.json
 build/
 chat_logs/
+.claude/
