@@ -919,3 +919,180 @@ TEST_CASE("Table followed by text", "[markdown][table]") {
     // Text after should appear
     REQUIRE(stripped.find("Some text after") != std::string::npos);
 }
+
+// ============================================================================
+// List formatting improvements
+// ============================================================================
+
+TEST_CASE("List items use bullet dot character", "[markdown][lists]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("* Item 1\n* Item 2\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // Should use ● bullet character
+    REQUIRE(stripped.find("●") != std::string::npos);
+    // Should NOT use * as bullet
+    REQUIRE(stripped.find("* Item") == std::string::npos);
+}
+
+TEST_CASE("List items are indented by 2 spaces", "[markdown][lists]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("* Item\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // Item should be indented (starts with spaces before bullet)
+    REQUIRE(stripped.find("  ●") != std::string::npos);
+}
+
+TEST_CASE("List has blank line before and after", "[markdown][lists]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("Before text.\n\n* Item 1\n* Item 2\n\nAfter text.\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // Should have structure: text, blank, list, blank, text
+    // Check that "Before text" and first bullet are separated
+    size_t before_pos = stripped.find("Before text.");
+    size_t bullet_pos = stripped.find("●");
+    REQUIRE(before_pos != std::string::npos);
+    REQUIRE(bullet_pos != std::string::npos);
+    // There should be at least one blank line (two newlines) between them
+    std::string between = stripped.substr(before_pos, bullet_pos - before_pos);
+    REQUIRE(between.find("\n\n") != std::string::npos);
+}
+
+TEST_CASE("No extra blank lines between list items", "[markdown][lists]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("* Item 1\n* Item 2\n* Item 3\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // Find positions of each bullet
+    size_t pos1 = stripped.find("● Item 1");
+    size_t pos2 = stripped.find("● Item 2");
+    size_t pos3 = stripped.find("● Item 3");
+    REQUIRE(pos1 != std::string::npos);
+    REQUIRE(pos2 != std::string::npos);
+    REQUIRE(pos3 != std::string::npos);
+    // Between items should be exactly one newline (no blank lines)
+    std::string between1 = stripped.substr(pos1, pos2 - pos1);
+    std::string between2 = stripped.substr(pos2, pos3 - pos2);
+    REQUIRE(between1.find("\n\n") == std::string::npos);
+    REQUIRE(between2.find("\n\n") == std::string::npos);
+}
+
+TEST_CASE("List streaming accumulates items", "[markdown][lists][streaming]") {
+    std::vector<std::string> outputs;
+    MarkdownRenderer renderer([&](const std::string& s) { outputs.push_back(s); }, true, 80);
+
+    // Feed list items one at a time
+    renderer.feed("* Item 1\n");
+    renderer.feed("* Item 2\n");
+    renderer.feed("* Item 3\n");
+    // End the list with non-list content
+    renderer.feed("Done.\n\n");
+    renderer.finish();
+
+    // Combine all output
+    std::string all_output;
+    for (const auto& s : outputs) {
+        all_output += s;
+    }
+    std::string stripped = strip_ansi(all_output);
+
+    // All items should be present
+    REQUIRE(stripped.find("Item 1") != std::string::npos);
+    REQUIRE(stripped.find("Item 2") != std::string::npos);
+    REQUIRE(stripped.find("Item 3") != std::string::npos);
+    REQUIRE(stripped.find("Done") != std::string::npos);
+}
+
+TEST_CASE("List item with code block", "[markdown][lists]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("1. Install\n   ```bash\n   apt install foo\n   ```\n\nDone.\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // Should have the numbered item
+    REQUIRE(stripped.find("1.") != std::string::npos);
+    REQUIRE(stripped.find("Install") != std::string::npos);
+    // Should have code block with box drawing
+    REQUIRE(stripped.find("┌") != std::string::npos);
+    REQUIRE(stripped.find("apt install foo") != std::string::npos);
+    // Should have the text after
+    REQUIRE(stripped.find("Done") != std::string::npos);
+}
+
+TEST_CASE("Code block in list is indented", "[markdown][lists]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("1. Step\n   ```\n   code\n   ```\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    // The code block border should be indented (have leading spaces)
+    size_t box_pos = stripped.find("┌");
+    REQUIRE(box_pos != std::string::npos);
+    // Check there are spaces before the box character
+    REQUIRE(box_pos > 0);
+    bool has_indent = true;
+    for (size_t i = box_pos - 1; i > 0 && stripped[i] != '\n'; i--) {
+        if (stripped[i] != ' ') {
+            has_indent = false;
+            break;
+        }
+    }
+    REQUIRE(has_indent);
+}
+
+TEST_CASE("Ordered list numbering", "[markdown][lists]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    renderer.feed("1. First\n2. Second\n3. Third\n\n");
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+    REQUIRE(stripped.find("1.") != std::string::npos);
+    REQUIRE(stripped.find("2.") != std::string::npos);
+    REQUIRE(stripped.find("3.") != std::string::npos);
+    REQUIRE(stripped.find("First") != std::string::npos);
+    REQUIRE(stripped.find("Second") != std::string::npos);
+    REQUIRE(stripped.find("Third") != std::string::npos);
+}
+
+// ============================================================================
+// Incremental rendering
+// ============================================================================
+
+TEST_CASE("Line-by-line rendering produces same output as batch", "[markdown][streaming]") {
+    // Batch rendering
+    OutputCollector batch_output;
+    MarkdownRenderer batch_renderer(std::ref(batch_output), true, -1);
+    batch_renderer.feed("Hello world.\n\nGoodbye.\n\n");
+    batch_renderer.finish();
+
+    // Line-by-line rendering
+    OutputCollector line_output;
+    MarkdownRenderer line_renderer(std::ref(line_output), true, -1);
+    line_renderer.feed("Hello world.\n");
+    line_renderer.feed("\n");
+    line_renderer.feed("Goodbye.\n");
+    line_renderer.feed("\n");
+    line_renderer.finish();
+
+    REQUIRE(strip_ansi(batch_output.result) == strip_ansi(line_output.result));
+}

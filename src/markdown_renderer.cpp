@@ -718,7 +718,7 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
                         prefix += std::to_string(list_item_number) + ". ";
                         list_item_number++;
                     } else {
-                        prefix += ansi(CYAN) + "*" + ansi(RESET) + " ";
+                        prefix += ansi(CYAN) + "●" + ansi(RESET) + " ";
                     }
                     result += prefix;
                     // Set indent for nested content (code blocks, etc.)
@@ -891,7 +891,7 @@ std::string MarkdownRenderer::list_item(const std::string& text, bool ordered, i
     if (ordered) {
         prefix += std::to_string(number) + ". ";
     } else {
-        prefix += ansi(CYAN) + "*" + ansi(RESET) + " ";
+        prefix += ansi(CYAN) + "●" + ansi(RESET) + " ";
     }
     return prefix + text + "\n";
 }
