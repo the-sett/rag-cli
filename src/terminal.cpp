@@ -41,6 +41,32 @@ int get_width() {
     return 80;
 }
 
+int get_height() {
+#ifdef _WIN32
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
+        return csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    }
+#else
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_row > 0) {
+        return ws.ws_row;
+    }
+#endif
+
+    // Try LINES environment variable
+    const char* lines = std::getenv("LINES");
+    if (lines) {
+        int height = std::atoi(lines);
+        if (height > 0) {
+            return height;
+        }
+    }
+
+    // Default fallback
+    return 24;
+}
+
 bool is_tty() {
 #ifdef _WIN32
     return _isatty(_fileno(stdout)) != 0;

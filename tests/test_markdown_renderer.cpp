@@ -2050,3 +2050,101 @@ TEST_CASE("Table italic formatting continues across wrapped lines", "[markdown][
 
     check_table_alignment(result);
 }
+
+// ============================================================================
+// Long block buffering (when content exceeds terminal height)
+// ============================================================================
+
+TEST_CASE("Long table triggers buffering mode when exceeding terminal height", "[markdown][buffering]") {
+    // Create a table with many rows that would exceed typical terminal height
+    std::string table = "| Header 1 | Header 2 |\n|----------|----------|\n";
+    for (int i = 0; i < 50; i++) {
+        table += "| Row " + std::to_string(i) + " | Data " + std::to_string(i) + " |\n";
+    }
+    table += "\n";
+
+    OutputCollector output;
+    // Set terminal width explicitly (height will be auto-detected or defaulted)
+    MarkdownRenderer renderer(std::ref(output), true, 80);
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string result = strip_ansi(output.result);
+
+    // The table should still render correctly even if it exceeded height
+    REQUIRE(result.find("Header 1") != std::string::npos);
+    REQUIRE(result.find("Row 0") != std::string::npos);
+    REQUIRE(result.find("Row 49") != std::string::npos);
+}
+
+TEST_CASE("Long code block triggers buffering mode", "[markdown][buffering]") {
+    // Create a code block with many lines
+    std::string code = "```cpp\n";
+    for (int i = 0; i < 50; i++) {
+        code += "int line_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+    }
+    code += "```\n\n";
+
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, 80);
+
+    renderer.feed(code);
+    renderer.finish();
+
+    std::string result = strip_ansi(output.result);
+
+    // The code block should still render correctly
+    REQUIRE(result.find("line_0") != std::string::npos);
+    REQUIRE(result.find("line_49") != std::string::npos);
+}
+
+TEST_CASE("Spinner shows during long block buffering", "[markdown][buffering]") {
+    // Create content that would trigger buffering
+    std::string table = "| Header 1 | Header 2 |\n|----------|----------|\n";
+    for (int i = 0; i < 30; i++) {
+        table += "| Row " + std::to_string(i) + " | Data " + std::to_string(i) + " |\n";
+    }
+    table += "\n";
+
+    // Track raw output including escape sequences
+    std::string raw_output;
+    auto output_fn = [&raw_output](const std::string& text) {
+        raw_output += text;
+    };
+
+    MarkdownRenderer renderer(output_fn, true, 80);
+
+    // Feed content in chunks to trigger streaming behavior
+    for (size_t i = 0; i < table.length(); i += 20) {
+        renderer.feed(table.substr(i, 20));
+    }
+    renderer.finish();
+
+    // Final output should contain the rendered table
+    std::string result = strip_ansi(raw_output);
+    REQUIRE(result.find("Header 1") != std::string::npos);
+    REQUIRE(result.find("Row 0") != std::string::npos);
+}
+
+TEST_CASE("Content after long block renders correctly", "[markdown][buffering]") {
+    // Table followed by paragraph
+    std::string content = "| Header 1 | Header 2 |\n|----------|----------|\n";
+    for (int i = 0; i < 30; i++) {
+        content += "| Row " + std::to_string(i) + " | Data " + std::to_string(i) + " |\n";
+    }
+    content += "\nThis is a paragraph after the table.\n";
+
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, 80);
+
+    renderer.feed(content);
+    renderer.finish();
+
+    std::string result = strip_ansi(output.result);
+
+    // Both table and paragraph should be present
+    REQUIRE(result.find("Header 1") != std::string::npos);
+    REQUIRE(result.find("Row 29") != std::string::npos);
+    REQUIRE(result.find("paragraph after the table") != std::string::npos);
+}

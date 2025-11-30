@@ -67,6 +67,14 @@ private:
     std::string raw_output_;
     static constexpr int MAX_REWRITE_LINES = 100;
 
+    // Long block buffering: when output exceeds terminal height, switch to buffering
+    int terminal_height_ = 0;          // 0 = auto-detect, -1 = disabled
+    int current_block_lines_ = 0;      // Lines output for current block's raw text
+    size_t current_block_start_ = 0;   // Position in raw_output_ where current block starts
+    bool buffering_long_block_ = false; // True when buffering silently
+    std::string long_block_buffer_;    // Buffer for content when in buffering mode
+    int spinner_state_ = 0;            // Spinner animation frame
+
     // Code block tracking
     bool in_code_block_ = false;
     std::string code_fence_chars_;  // ``` or ~~~
@@ -94,6 +102,9 @@ private:
     // Hybrid streaming output
     void output_raw(const std::string& text);
     void rewrite_block(size_t raw_len, const std::string& formatted);
+    void check_buffering_needed();
+    void update_spinner();
+    void finish_long_block_buffering(const std::string& formatted);
 
     // Rendering
     std::string render_markdown(const std::string& markdown);

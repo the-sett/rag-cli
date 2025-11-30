@@ -3,6 +3,8 @@
 #include <cmark.h>
 #include <sstream>
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
 #include <vector>
 #include <algorithm>
 
@@ -146,11 +148,27 @@ MarkdownRenderer::MarkdownRenderer(OutputCallback output, bool colors_enabled, i
         // Auto-detect
         if (terminal::is_tty()) {
             terminal_width_ = terminal::get_width();
+            terminal_height_ = terminal::get_height();
         } else {
             terminal_width_ = -1;  // Disable rewrite for non-TTY
+            terminal_height_ = -1;
         }
     } else {
         terminal_width_ = terminal_width;
+        // Auto-detect height even when width is specified
+        if (terminal_width > 0) {
+            // Always try to get height when width is explicitly set (for testing)
+            terminal_height_ = terminal::get_height();
+        } else {
+            terminal_height_ = -1;
+        }
+    }
+
+    // DEBUG
+    static bool debug_enabled = (std::getenv("DEBUG_MARKDOWN") != nullptr);
+    if (debug_enabled) {
+        fprintf(stderr, "[DEBUG] MarkdownRenderer: terminal_width_=%d, terminal_height_=%d\n",
+                terminal_width_, terminal_height_);
     }
 }
 
@@ -160,9 +178,20 @@ void MarkdownRenderer::feed(const std::string& delta) {
     // In hybrid mode, output raw text immediately
     output_raw(delta);
 
+    // DEBUG
+    static bool debug_enabled = (std::getenv("DEBUG_MARKDOWN") != nullptr);
+
     // Process complete blocks
     while (has_complete_block()) {
         std::string block = extract_complete_block();
+        if (debug_enabled && !block.empty()) {
+            std::string block_preview = block.substr(0, 40);
+            if (block.length() > 40) block_preview += "...";
+            // Replace newlines for display
+            for (char& c : block_preview) if (c == '\n') c = '|';
+            fprintf(stderr, "[DEBUG] Complete block extracted: \"%s\"\n", block_preview.c_str());
+        }
+
         std::string formatted = render_markdown(block);
 
         // In hybrid mode, raw_output_ contains everything we've output.
@@ -171,9 +200,18 @@ void MarkdownRenderer::feed(const std::string& delta) {
         // (which equals the block we just extracted)
         size_t rewrite_len = raw_output_.length() - buffer_.length();
 
+        if (debug_enabled) {
+            fprintf(stderr, "[DEBUG] Calling rewrite_block: rewrite_len=%zu, raw_output_.length()=%zu, buffer_.length()=%zu\n",
+                    rewrite_len, raw_output_.length(), buffer_.length());
+        }
+
         // Replace raw output with formatted version
         rewrite_block(rewrite_len, formatted);
     }
+
+    // After processing all complete blocks, check if the remaining incomplete
+    // block has grown large enough to need buffering
+    check_buffering_needed();
 }
 
 void MarkdownRenderer::finish() {
@@ -200,14 +238,66 @@ void MarkdownRenderer::output_raw(const std::string& text) {
         return;
     }
 
-    // Output the raw text immediately
-    output_(text);
+    // If already buffering a long block, just accumulate
+    if (buffering_long_block_) {
+        long_block_buffer_ += text;
+        update_spinner();
+        return;
+    }
 
-    // Track it for later rewrite
+    // Output the raw text immediately (for responsive streaming)
+    output_(text);
     raw_output_ += text;
+
+    // Note: We don't check for buffering mode here anymore.
+    // Buffering check happens in check_buffering_needed() which is called
+    // from feed() AFTER all complete blocks have been extracted.
+    // This ensures we only buffer for truly incomplete blocks.
+}
+
+void MarkdownRenderer::check_buffering_needed() {
+    if (terminal_width_ < 0 || buffering_long_block_) {
+        return;  // Rewrite disabled or already buffering
+    }
+
+    // Calculate how many lines the current incomplete block occupies.
+    // raw_output_ contains only unrendered content (remainder from last rewrite).
+    // current_block_start_ should be 0 after each rewrite_block() call.
+    std::string current_block_text = raw_output_.substr(current_block_start_);
+    current_block_lines_ = terminal::count_lines(current_block_text, terminal_width_);
+
+    // Check if this block's height is approaching terminal height limit
+    // Leave 1 line for the spinner at the bottom
+    int height_limit = (terminal_height_ > 0) ? terminal_height_ - 1 : MAX_REWRITE_LINES;
+
+    // DEBUG
+    static bool debug_enabled = (std::getenv("DEBUG_MARKDOWN") != nullptr);
+    if (debug_enabled) {
+        fprintf(stderr, "[DEBUG] check_buffering_needed: current_block_start_=%zu, raw_output_.len=%zu, current_block_lines_=%d, height_limit=%d\n",
+                current_block_start_, raw_output_.length(), current_block_lines_, height_limit);
+    }
+
+    if (current_block_lines_ >= height_limit && height_limit > 0) {
+        if (debug_enabled) {
+            fprintf(stderr, "[DEBUG] Switching to buffering mode!\n");
+        }
+        // Switch to buffering mode for subsequent content
+        buffering_long_block_ = true;
+        long_block_buffer_.clear();
+
+        // Show spinner on a new line at the bottom
+        output_("\n");
+        update_spinner();
+    }
 }
 
 void MarkdownRenderer::rewrite_block(size_t raw_len, const std::string& formatted) {
+    // Handle long block buffering mode first
+    if (buffering_long_block_) {
+        finish_long_block_buffering(formatted);
+        return;
+    }
+
     if (terminal_width_ < 0 || raw_output_.empty()) {
         // Rewrite disabled or nothing to rewrite - just output formatted
         output_(formatted);
@@ -267,6 +357,79 @@ void MarkdownRenderer::rewrite_block(size_t raw_len, const std::string& formatte
 
     // Update raw_output_ to just the remainder
     raw_output_ = remainder;
+
+    // Reset block tracking - the remainder is the start of the next block
+    current_block_start_ = 0;  // Remainder is now at the start of raw_output_
+    current_block_lines_ = terminal::count_lines(remainder, terminal_width_);
+
+    // DEBUG
+    static bool debug_enabled = (std::getenv("DEBUG_MARKDOWN") != nullptr);
+    if (debug_enabled) {
+        fprintf(stderr, "[DEBUG] rewrite_block done: remainder has %zu bytes, current_block_start_=0, current_block_lines_=%d\n",
+                remainder.length(), current_block_lines_);
+    }
+}
+
+void MarkdownRenderer::update_spinner() {
+    // Spinner characters for animation
+    static const char* spinner_frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+    static const int num_frames = 10;
+
+    // Count buffered lines
+    int buffered_lines = terminal::count_lines(long_block_buffer_, terminal_width_);
+
+    // Move to start of line, show spinner with line count
+    std::string seq;
+    seq += "\r";
+    seq += ansi("\033[36m");  // Cyan
+    seq += spinner_frames[spinner_state_ % num_frames];
+    seq += " Buffering... ";
+    seq += std::to_string(buffered_lines);
+    seq += " lines";
+    seq += ansi("\033[0m");
+    seq += terminal::clear::to_end_of_line();
+
+    output_(seq);
+    spinner_state_++;
+}
+
+void MarkdownRenderer::finish_long_block_buffering(const std::string& formatted) {
+    if (!buffering_long_block_) {
+        return;
+    }
+
+    // We need to:
+    // 1. Clear the spinner line (we're currently on it)
+    // 2. Move up past all the visible raw output
+    // 3. Clear everything from there down
+    // 4. Output the formatted content
+
+    std::string seq;
+
+    // Clear the spinner line first
+    seq += "\r";
+    seq += terminal::clear::to_end_of_line();
+
+    // Move up: current_block_lines_ of raw output + 1 for the spinner line we added
+    int lines_to_go_up = current_block_lines_;
+    if (lines_to_go_up > 0) {
+        seq += terminal::cursor::up(lines_to_go_up);
+    }
+
+    // Clear from cursor to end of screen (removes all raw output + spinner line)
+    seq += terminal::clear::to_end_of_screen();
+
+    // Output the formatted content
+    seq += formatted;
+
+    output_(seq);
+
+    // Reset buffering state
+    buffering_long_block_ = false;
+    long_block_buffer_.clear();
+    current_block_lines_ = 0;
+    raw_output_.clear();
+    spinner_state_ = 0;
 }
 
 bool MarkdownRenderer::is_code_fence(const std::string& line, size_t& fence_length, std::string& fence_chars) const {

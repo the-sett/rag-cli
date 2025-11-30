@@ -12,6 +12,12 @@ namespace terminal {
 int get_width();
 
 /**
+ * Get the terminal height in rows.
+ * Returns 24 if height cannot be determined.
+ */
+int get_height();
+
+/**
  * Check if stdout is a TTY (interactive terminal).
  */
 bool is_tty();
