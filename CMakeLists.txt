@@ -23,6 +23,7 @@ set(SOURCES
     src/chat.cpp
     src/markdown_renderer.cpp
     src/terminal.cpp
+    src/input_editor.cpp
 )
 
 add_executable(crag ${SOURCES})
@@ -54,6 +55,7 @@ if(BUILD_TESTS)
         src/chat.cpp
         src/markdown_renderer.cpp
         src/terminal.cpp
+        src/input_editor.cpp
     )
 
     add_library(crag_lib STATIC ${LIB_SOURCES})

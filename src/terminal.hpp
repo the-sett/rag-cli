@@ -94,5 +94,17 @@ namespace clear {
     std::string line();
 }
 
+/**
+ * Save the current terminal settings.
+ * Call this at program startup before any raw mode changes.
+ */
+void save_original_settings();
+
+/**
+ * Restore terminal to original settings.
+ * Safe to call from signal handlers.
+ */
+void restore_original_settings();
+
 } // namespace terminal
 } // namespace rag

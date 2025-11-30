@@ -6,19 +6,36 @@
 #include "vector_store.hpp"
 #include "chat.hpp"
 #include "markdown_renderer.hpp"
+#include "input_editor.hpp"
+#include "terminal.hpp"
 
 #include <CLI/CLI.hpp>
 #include <iostream>
 #include <cstdlib>
 #include <csignal>
+#include <thread>
+#include <atomic>
+#include <chrono>
 
 using namespace rag;
 
-// Global console for signal handler
+// Global state for signal handler
 static Console* g_console = nullptr;
+static std::atomic<bool>* g_stop_spinner = nullptr;
 
 void signal_handler(int) {
+    // Restore terminal settings FIRST (before any output)
+    terminal::restore_original_settings();
+
+    // Stop the spinner thread
+    if (g_stop_spinner) {
+        g_stop_spinner->store(true);
+    }
+
     if (g_console) {
+        // Clear any spinner remnants and reset terminal
+        g_console->print_raw("\r\033[K");  // Clear line
+        g_console->print_raw("\033[?25h"); // Show cursor (in case hidden)
         g_console->println();
         g_console->print_warning("Interrupted.");
     }
@@ -227,6 +244,9 @@ int main(int argc, char* argv[]) {
 
     CLI11_PARSE(app, argc, argv);
 
+    // Save terminal settings before any raw mode changes
+    terminal::save_original_settings();
+
     Console console;
     g_console = &console;
 
@@ -285,6 +305,31 @@ int main(int argc, char* argv[]) {
         chat.add_user_message(user_input);
 
         std::string streamed_text;
+        std::atomic<bool> first_chunk{true};
+        std::atomic<bool> stop_spinner{false};
+
+        // Set global pointer for signal handler
+        g_stop_spinner = &stop_spinner;
+
+        // Animated spinner in background thread
+        std::thread spinner_thread;
+        if (!non_interactive) {
+            spinner_thread = std::thread([&]() {
+                const char* frames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
+                int frame = 0;
+                while (!stop_spinner.load()) {
+                    std::string spinner_line = "\r";
+                    spinner_line += ansi::CYAN;
+                    spinner_line += frames[frame];
+                    spinner_line += " Thinking...";
+                    spinner_line += ansi::RESET;
+                    console.print_raw(spinner_line);
+                    console.flush();
+                    frame = (frame + 1) % 10;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+                }
+            });
+        }
 
         try {
             if (render_markdown) {
@@ -300,6 +345,14 @@ int main(int argc, char* argv[]) {
                     settings.vector_store_id,
                     reasoning_effort,
                     [&](const std::string& delta) {
+                        if (first_chunk.exchange(false)) {
+                            // Stop spinner and clear the line before first output
+                            stop_spinner.store(true);
+                            if (spinner_thread.joinable()) {
+                                spinner_thread.join();
+                            }
+                            console.print_raw("\r\033[K");
+                        }
                         renderer.feed(delta);
                         streamed_text += delta;
                     }
@@ -314,6 +367,14 @@ int main(int argc, char* argv[]) {
                     settings.vector_store_id,
                     reasoning_effort,
                     [&](const std::string& delta) {
+                        if (first_chunk.exchange(false) && !non_interactive) {
+                            // Stop spinner and clear the line before first output
+                            stop_spinner.store(true);
+                            if (spinner_thread.joinable()) {
+                                spinner_thread.join();
+                            }
+                            console.print_raw("\r\033[K");
+                        }
                         if (non_interactive) {
                             std::cout << delta << std::flush;
                         } else {
@@ -325,9 +386,26 @@ int main(int argc, char* argv[]) {
                 );
             }
         } catch (const std::exception& e) {
+            // Stop spinner on error
+            stop_spinner.store(true);
+            if (spinner_thread.joinable()) {
+                spinner_thread.join();
+            }
+            if (!non_interactive) {
+                console.print_raw("\r\033[K");  // Clear spinner line
+            }
             console.println();
             console.print_error("Error: " + std::string(e.what()));
         }
+
+        // Ensure spinner thread is stopped
+        stop_spinner.store(true);
+        if (spinner_thread.joinable()) {
+            spinner_thread.join();
+        }
+
+        // Clear global pointer now that spinner is done
+        g_stop_spinner = nullptr;
 
         chat.add_assistant_message(streamed_text);
     };
@@ -363,17 +441,17 @@ int main(int argc, char* argv[]) {
     // Interactive chat loop
     console.println();
     console.print_header("=== RAG CLI Ready ===");
-    console.println("Type 'quit' to exit.");
+    console.println("Type 'quit' to exit. Press Enter twice quickly to submit.");
     console.println();
 
-    while (true) {
-        console.print("You: ");
-        console.flush();
+    // Create input editor
+    InputEditor input_editor([](const std::string& text) {
+        std::cout << text;
+        std::cout.flush();
+    }, true);
 
-        std::string user_input;
-        if (!std::getline(std::cin, user_input)) {
-            break;
-        }
+    while (true) {
+        std::string user_input = input_editor.read_input();
 
         // Trim whitespace
         size_t start = user_input.find_first_not_of(" \t\n\r");
@@ -393,14 +471,8 @@ int main(int argc, char* argv[]) {
             break;
         }
 
-        console.println();
-        console.print_colored("Assistant:", ansi::BOLD);
-        console.print_colored("", ansi::GREEN);
-        console.println();
-
         process_query(user_input);
 
-        console.println();
         console.println();
     }
 

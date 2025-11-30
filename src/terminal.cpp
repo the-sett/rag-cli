@@ -8,9 +8,17 @@
 #else
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <termios.h>
 #endif
 
 #include <cstdlib>
+
+namespace {
+#ifndef _WIN32
+    struct termios g_original_termios;
+    bool g_termios_saved = false;
+#endif
+}
 
 namespace rag {
 namespace terminal {
@@ -245,6 +253,25 @@ std::string line() {
 }
 
 } // namespace clear
+
+void save_original_settings() {
+#ifndef _WIN32
+    if (!g_termios_saved && isatty(STDIN_FILENO)) {
+        if (tcgetattr(STDIN_FILENO, &g_original_termios) == 0) {
+            g_termios_saved = true;
+        }
+    }
+#endif
+}
+
+void restore_original_settings() {
+#ifndef _WIN32
+    if (g_termios_saved) {
+        // Use TCSANOW for immediate effect (safe in signal handlers)
+        tcsetattr(STDIN_FILENO, TCSANOW, &g_original_termios);
+    }
+#endif
+}
 
 } // namespace terminal
 } // namespace rag
