@@ -16,6 +16,36 @@ public:
     }
 };
 
+// Helper to calculate display width (handling UTF-8 multi-byte chars)
+// Assumes each UTF-8 code point is 1 display column (good for box-drawing chars)
+size_t display_width(const std::string& text) {
+    size_t width = 0;
+    for (size_t i = 0; i < text.length(); ) {
+        unsigned char c = text[i];
+        if ((c & 0x80) == 0) {
+            // ASCII
+            width++;
+            i++;
+        } else if ((c & 0xE0) == 0xC0) {
+            // 2-byte UTF-8
+            width++;
+            i += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            // 3-byte UTF-8 (includes box-drawing chars)
+            width++;
+            i += 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            // 4-byte UTF-8
+            width++;
+            i += 4;
+        } else {
+            // Invalid or continuation byte, skip
+            i++;
+        }
+    }
+    return width;
+}
+
 // Helper to strip ANSI codes for easier comparison
 std::string strip_ansi(const std::string& text) {
     std::string result;
@@ -1578,4 +1608,385 @@ TEST_CASE("Streaming list items share one blank line before", "[markdown][spacin
     }
     // One after "Intro." and one blank = 2 newlines before items
     REQUIRE(newline_count == 2);
+}
+
+// =============================================================================
+// Table Width Constraint Tests
+// =============================================================================
+
+TEST_CASE("Table respects specified terminal width", "[markdown][table][width]") {
+    OutputCollector output;
+    // Specify a narrow terminal width
+    MarkdownRenderer renderer(std::ref(output), false, 60);
+
+    std::string table = R"(| Column A | Column B | Column C |
+|----------|----------|----------|
+| Short    | Medium   | Longer   |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Each line of the formatted table should be at most 60 display characters
+    // (Only check lines with box-drawing chars - those are the rendered table)
+    std::istringstream stream(stripped);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.find("│") != std::string::npos ||
+            line.find("┌") != std::string::npos ||
+            line.find("└") != std::string::npos) {
+            REQUIRE(display_width(line) <= 60);
+        }
+    }
+}
+
+TEST_CASE("Table columns scale down for narrow terminals", "[markdown][table][width]") {
+    OutputCollector output;
+    // Very narrow terminal
+    MarkdownRenderer renderer(std::ref(output), false, 40);
+
+    std::string table = R"(| Very Long Column Header One | Very Long Column Header Two |
+|-----------------------------|------------------------------|
+| Some long content here      | More long content over here  |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Each line of the formatted table should respect the width constraint
+    // (Only check lines with box-drawing chars - those are the rendered table)
+    std::istringstream stream(stripped);
+    std::string line;
+    while (std::getline(stream, line)) {
+        // Check if this is a table line (contains box-drawing characters)
+        if (line.find("│") != std::string::npos ||
+            line.find("┌") != std::string::npos ||
+            line.find("└") != std::string::npos) {
+            REQUIRE(display_width(line) <= 40);
+        }
+    }
+}
+
+TEST_CASE("Table with many columns may overflow when min width 8 is too wide", "[markdown][table][width]") {
+    OutputCollector output;
+    // Narrow terminal with many columns - overflow acceptable
+    MarkdownRenderer renderer(std::ref(output), false, 60);
+
+    // 10 columns at min width 8 = 80 chars of content, plus borders
+    // This will overflow 60 chars, which is acceptable
+    std::string table = R"(| A | B | C | D | E | F | G | H | I | J |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 0 |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    // The table should still render (not crash or produce empty output)
+    REQUIRE(!output.result.empty());
+    // Should contain table border characters
+    REQUIRE(output.result.find("│") != std::string::npos);
+}
+
+TEST_CASE("Table with few columns fits within terminal width", "[markdown][table][width]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), false, 80);
+
+    std::string table = R"(| Name | Value |
+|------|-------|
+| foo  | 123   |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Each line of the formatted table should fit within 80 chars
+    // (Only check lines with box-drawing chars - those are the rendered table)
+    std::istringstream stream(stripped);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.find("│") != std::string::npos ||
+            line.find("┌") != std::string::npos ||
+            line.find("└") != std::string::npos) {
+            REQUIRE(display_width(line) <= 80);
+        }
+    }
+}
+
+TEST_CASE("Table content is wrapped when columns are scaled", "[markdown][table][width]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), false, 50);
+
+    // Content that needs wrapping when columns are scaled down
+    std::string table = R"(| Description | Details |
+|-------------|---------|
+| This is a fairly long description that will need to wrap | And this has more details |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Table should render and fit within width
+    // (Only check lines with box-drawing chars - those are the rendered table)
+    std::istringstream stream(stripped);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.find("│") != std::string::npos ||
+            line.find("┌") != std::string::npos ||
+            line.find("└") != std::string::npos) {
+            REQUIRE(display_width(line) <= 50);
+        }
+    }
+}
+
+// =============================================================================
+// Table Vertical Alignment Tests
+// =============================================================================
+
+// Helper to check that all table lines have the same display width
+void check_table_alignment(const std::string& output) {
+    std::string stripped = strip_ansi(output);
+    std::istringstream stream(stripped);
+    std::string line;
+    size_t expected_width = 0;
+    int line_num = 0;
+
+    while (std::getline(stream, line)) {
+        // Only check lines that are part of the rendered table (have box chars)
+        if (line.find("│") != std::string::npos ||
+            line.find("┌") != std::string::npos ||
+            line.find("└") != std::string::npos ||
+            line.find("├") != std::string::npos) {
+
+            size_t width = display_width(line);
+            if (expected_width == 0) {
+                expected_width = width;
+            } else {
+                INFO("Line " << line_num << ": \"" << line << "\"");
+                INFO("Expected width: " << expected_width << ", actual: " << width);
+                REQUIRE(width == expected_width);
+            }
+        }
+        line_num++;
+    }
+}
+
+TEST_CASE("Table with en-dash aligns correctly", "[markdown][table][alignment]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), false, -1);
+
+    // En-dash (–) is 3 bytes but 1 display column
+    std::string table = R"(| Column A | Column B |
+|----------|----------|
+| Normal   | Text     |
+| With–dash | Here    |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    check_table_alignment(output.result);
+}
+
+TEST_CASE("Table with em-dash aligns correctly", "[markdown][table][alignment]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), false, -1);
+
+    // Em-dash (—) is 3 bytes but 1 display column
+    std::string table = R"(| Column A | Column B |
+|----------|----------|
+| Normal   | Text     |
+| With—dash | Here    |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    check_table_alignment(output.result);
+}
+
+TEST_CASE("Table with curly quotes aligns correctly", "[markdown][table][alignment]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), false, -1);
+
+    // Curly quotes are 3 bytes but 1 display column each
+    std::string table = R"(| Column A | Column B |
+|----------|----------|
+| "quoted" | Text     |
+| Normal   | Here     |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    check_table_alignment(output.result);
+}
+
+TEST_CASE("Table with mixed UTF-8 characters aligns correctly", "[markdown][table][alignment]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), false, -1);
+
+    // Mix of multi-byte UTF-8: en-dash, em-dash, curly quotes, ellipsis
+    std::string table = R"(| Asset | Location | Stage |
+|-------|----------|-------|
+| Project–One | México | "active" |
+| Normal | USA | done… |
+| Another—test | "quoted" | – |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    check_table_alignment(output.result);
+}
+
+TEST_CASE("Table with only ASCII aligns correctly", "[markdown][table][alignment]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), false, -1);
+
+    std::string table = R"(| Name | Value | Status |
+|------|-------|--------|
+| foo  | 123   | ok     |
+| bar  | 456   | done   |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    check_table_alignment(output.result);
+}
+
+TEST_CASE("Table with wrapped cells containing UTF-8 aligns correctly", "[markdown][table][alignment]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), false, 60);
+
+    // Long content with UTF-8 that will wrap
+    std::string table = R"(| Header | Details |
+|--------|---------|
+| Short | This is a longer description with an en–dash and "quotes" that should wrap |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    check_table_alignment(output.result);
+}
+
+// =============================================================================
+// Table Inline Formatting Tests
+// =============================================================================
+
+TEST_CASE("Table renders bold text in cells", "[markdown][table][inline]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string table = R"(| Column A | Column B |
+|----------|----------|
+| **bold** | normal   |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string result = output.result;
+    // Bold text should have ANSI bold code and not show **
+    REQUIRE(result.find("**bold**") == std::string::npos);
+    REQUIRE(result.find("\033[1m") != std::string::npos);  // Bold ANSI code
+    REQUIRE(result.find("bold") != std::string::npos);
+
+    check_table_alignment(result);
+}
+
+TEST_CASE("Table renders italic text in cells", "[markdown][table][inline]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string table = R"(| Column A | Column B |
+|----------|----------|
+| *italic* | normal   |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string result = output.result;
+    // Italic text should have ANSI italic code and not show *
+    REQUIRE(result.find("*italic*") == std::string::npos);
+    REQUIRE(result.find("\033[3m") != std::string::npos);  // Italic ANSI code
+    REQUIRE(result.find("italic") != std::string::npos);
+
+    check_table_alignment(result);
+}
+
+TEST_CASE("Table renders inline code in cells", "[markdown][table][inline]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string table = R"(| Column A | Column B |
+|----------|----------|
+| `code`   | normal   |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string result = output.result;
+    // Code should have ANSI cyan color and contain the word "code"
+    REQUIRE(result.find("\033[36m") != std::string::npos);  // Cyan ANSI code
+    REQUIRE(result.find("code") != std::string::npos);
+
+    check_table_alignment(result);
+}
+
+TEST_CASE("Table renders mixed inline formatting", "[markdown][table][inline]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string table = R"(| Name | Description |
+|------|-------------|
+| **Project** | A *really* good `thing` |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string result = output.result;
+    // Should not have raw bold/italic markdown syntax (** and *)
+    REQUIRE(result.find("**Project**") == std::string::npos);
+    REQUIRE(result.find("*really*") == std::string::npos);
+    // But should have the text with ANSI formatting
+    REQUIRE(result.find("Project") != std::string::npos);
+    REQUIRE(result.find("really") != std::string::npos);
+    REQUIRE(result.find("thing") != std::string::npos);
+    // Should have bold, italic, and cyan (code) ANSI codes
+    REQUIRE(result.find("\033[1m") != std::string::npos);  // Bold
+    REQUIRE(result.find("\033[3m") != std::string::npos);  // Italic
+    REQUIRE(result.find("\033[36m") != std::string::npos); // Cyan (code)
+
+    check_table_alignment(result);
+}
+
+TEST_CASE("Table with inline formatting maintains alignment", "[markdown][table][inline]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string table = R"(| Asset | Location | Status |
+|-------|----------|--------|
+| **Cerro del Gallo** | México | *active* |
+| Normal text | USA | `done` |
+| **Another–bold** | "quoted" | – |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    check_table_alignment(output.result);
 }

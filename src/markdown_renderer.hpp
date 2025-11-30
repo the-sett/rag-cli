@@ -97,6 +97,7 @@ private:
 
     // Rendering
     std::string render_markdown(const std::string& markdown);
+    std::string render_inline(const std::string& text) const;
 
     // ANSI formatting helpers
     std::string ansi(const char* code) const;

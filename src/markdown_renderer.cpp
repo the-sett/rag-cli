@@ -9,6 +9,93 @@
 namespace rag {
 
 namespace {
+    // Calculate display width of a UTF-8 string (counts code points, not bytes)
+    // Assumes each code point is 1 display column (works for most text)
+    // Skips ANSI escape sequences (zero display width)
+    size_t display_width(const std::string& text) {
+        size_t width = 0;
+        bool in_escape = false;
+        for (size_t i = 0; i < text.length(); ) {
+            unsigned char c = text[i];
+
+            // Handle ANSI escape sequences
+            if (c == '\033') {
+                in_escape = true;
+                i++;
+                continue;
+            }
+            if (in_escape) {
+                // CSI sequences end with a letter (A-Z, a-z)
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+                    in_escape = false;
+                }
+                i++;
+                continue;
+            }
+
+            if ((c & 0x80) == 0) {
+                // ASCII (1 byte)
+                width++;
+                i++;
+            } else if ((c & 0xE0) == 0xC0) {
+                // 2-byte UTF-8
+                width++;
+                i += 2;
+            } else if ((c & 0xF0) == 0xE0) {
+                // 3-byte UTF-8 (includes box-drawing, dashes, quotes)
+                width++;
+                i += 3;
+            } else if ((c & 0xF8) == 0xF0) {
+                // 4-byte UTF-8
+                width++;
+                i += 4;
+            } else {
+                // Invalid or continuation byte, skip
+                i++;
+            }
+        }
+        return width;
+    }
+
+    // Advance a byte index by n display characters, returning the new byte position
+    // Skips ANSI escape sequences (zero display width)
+    size_t advance_by_display_chars(const std::string& text, size_t byte_pos, size_t n_chars) {
+        size_t chars_advanced = 0;
+        bool in_escape = false;
+        while (byte_pos < text.length() && chars_advanced < n_chars) {
+            unsigned char c = text[byte_pos];
+
+            // Handle ANSI escape sequences
+            if (c == '\033') {
+                in_escape = true;
+                byte_pos++;
+                continue;
+            }
+            if (in_escape) {
+                // CSI sequences end with a letter (A-Z, a-z)
+                if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+                    in_escape = false;
+                }
+                byte_pos++;
+                continue;
+            }
+
+            if ((c & 0x80) == 0) {
+                byte_pos++;
+            } else if ((c & 0xE0) == 0xC0) {
+                byte_pos += 2;
+            } else if ((c & 0xF0) == 0xE0) {
+                byte_pos += 3;
+            } else if ((c & 0xF8) == 0xF0) {
+                byte_pos += 4;
+            } else {
+                byte_pos++;
+            }
+            chars_advanced++;
+        }
+        return byte_pos;
+    }
+
     // ANSI escape codes
     constexpr const char* RESET = "\033[0m";
     constexpr const char* BOLD = "\033[1m";
@@ -1134,6 +1221,93 @@ std::string MarkdownRenderer::horizontal_rule() const {
     return ansi(DIM) + "────────────────────────────────────────" + ansi(RESET) + "\n";
 }
 
+std::string MarkdownRenderer::render_inline(const std::string& text) const {
+    // Parse text as markdown and render only inline elements
+    cmark_node* doc = cmark_parse_document(text.c_str(), text.length(), CMARK_OPT_DEFAULT);
+    if (!doc) {
+        return text;
+    }
+
+    std::string result;
+    cmark_iter* iter = cmark_iter_new(doc);
+    cmark_event_type ev_type;
+
+    while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
+        cmark_node* cur = cmark_iter_get_node(iter);
+        bool entering = (ev_type == CMARK_EVENT_ENTER);
+        cmark_node_type type = cmark_node_get_type(cur);
+
+        switch (type) {
+            case CMARK_NODE_TEXT: {
+                if (entering) {
+                    const char* literal = cmark_node_get_literal(cur);
+                    if (literal) {
+                        result += literal;
+                    }
+                }
+                break;
+            }
+
+            case CMARK_NODE_SOFTBREAK:
+                result += " ";
+                break;
+
+            case CMARK_NODE_LINEBREAK:
+                result += " ";  // In table cells, convert to space
+                break;
+
+            case CMARK_NODE_CODE: {
+                if (entering) {
+                    const char* literal = cmark_node_get_literal(cur);
+                    result += code(literal ? literal : "");
+                }
+                break;
+            }
+
+            case CMARK_NODE_STRONG: {
+                if (entering) {
+                    std::string inner = collect_text(cur);
+                    result += bold(inner);
+                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                }
+                break;
+            }
+
+            case CMARK_NODE_EMPH: {
+                if (entering) {
+                    std::string inner = collect_text(cur);
+                    result += italic(inner);
+                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                }
+                break;
+            }
+
+            case CMARK_NODE_LINK: {
+                if (entering) {
+                    std::string linktext = collect_text(cur);
+                    const char* url = cmark_node_get_url(cur);
+                    result += link(linktext, url ? url : "");
+                    cmark_iter_reset(iter, cur, CMARK_EVENT_EXIT);
+                }
+                break;
+            }
+
+            // Skip block-level elements (document, paragraph wrappers)
+            case CMARK_NODE_DOCUMENT:
+            case CMARK_NODE_PARAGRAPH:
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    cmark_iter_free(iter);
+    cmark_node_free(doc);
+
+    return result;
+}
+
 std::string MarkdownRenderer::render_table(const std::string& table_text) const {
     // Parse table into rows and cells
     std::vector<std::vector<std::string>> rows;
@@ -1190,6 +1364,13 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
         return table_text;  // Fallback to raw
     }
 
+    // Render inline markdown in each cell
+    for (auto& row : rows) {
+        for (auto& cell : row) {
+            cell = render_inline(cell);
+        }
+    }
+
     // Determine number of columns
     size_t num_cols = 0;
     for (const auto& row : rows) {
@@ -1200,45 +1381,86 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
         return table_text;
     }
 
-    // Calculate available width
-    int available_width = terminal_width_ > 0 ? terminal_width_ : 80;
+    // Calculate available width - always use actual terminal width
+    int available_width;
+    if (terminal_width_ > 0) {
+        available_width = terminal_width_;
+    } else {
+        // Auto-detect or buffer-only mode - get real terminal width
+        available_width = terminal::get_width();
+    }
 
-    // Reserve space for borders: │ col │ col │ = (num_cols + 1) pipes + 2 spaces per col
+    // Reserve space for borders: │ col │ col │ = (num_cols + 1) border chars + 2 spaces per col
     int border_overhead = static_cast<int>(num_cols + 1 + num_cols * 2);
     int content_width = available_width - border_overhead;
 
-    if (content_width < static_cast<int>(num_cols * 5)) {
-        // Too narrow, fall back to simpler rendering
-        content_width = static_cast<int>(num_cols * 10);
+    if (content_width < static_cast<int>(num_cols)) {
+        // Terminal too narrow for this table - use minimum viable width
+        content_width = static_cast<int>(num_cols);
     }
 
     // Calculate column widths based on content
     std::vector<size_t> col_widths(num_cols, 0);
     for (const auto& row : rows) {
         for (size_t i = 0; i < row.size() && i < num_cols; i++) {
-            col_widths[i] = std::max(col_widths[i], row[i].length());
+            col_widths[i] = std::max(col_widths[i], display_width(row[i]));
         }
     }
 
-    // Scale columns to fit available width
+    // Calculate total content width needed
     size_t total_content = 0;
     for (size_t w : col_widths) {
         total_content += w;
     }
 
+    // Scale columns to fit available width if needed
     if (total_content > static_cast<size_t>(content_width)) {
-        // Need to scale down - distribute width proportionally but ensure minimum
+        // Minimum column width of 8, unless that would overflow
         size_t min_width = 8;
-        std::vector<size_t> new_widths(num_cols);
+        size_t min_total = num_cols * min_width;
 
-        for (size_t i = 0; i < num_cols; i++) {
-            double ratio = static_cast<double>(col_widths[i]) / total_content;
-            new_widths[i] = std::max(min_width, static_cast<size_t>(ratio * content_width));
+        if (min_total <= static_cast<size_t>(content_width)) {
+            // Scale columns proportionally to fit exactly within content_width
+            // Each column gets a share proportional to its original width
+            std::vector<size_t> new_widths(num_cols);
+            size_t remaining = static_cast<size_t>(content_width);
+
+            for (size_t i = 0; i < num_cols; i++) {
+                // Calculate proportional width, but ensure minimum of min_width
+                double ratio = static_cast<double>(col_widths[i]) / total_content;
+                size_t proportional = static_cast<size_t>(ratio * content_width + 0.5);
+                new_widths[i] = std::max(min_width, proportional);
+                remaining -= new_widths[i];
+            }
+
+            // Adjust if we went over (due to minimums or rounding)
+            size_t new_total = 0;
+            for (size_t w : new_widths) new_total += w;
+
+            if (new_total > static_cast<size_t>(content_width)) {
+                // Reduce the largest columns to fit
+                while (new_total > static_cast<size_t>(content_width)) {
+                    size_t max_idx = 0;
+                    for (size_t i = 1; i < num_cols; i++) {
+                        if (new_widths[i] > new_widths[max_idx]) {
+                            max_idx = i;
+                        }
+                    }
+                    if (new_widths[max_idx] > min_width) {
+                        new_widths[max_idx]--;
+                        new_total--;
+                    } else {
+                        break; // All at minimum, can't reduce further
+                    }
+                }
+            }
+
+            col_widths = new_widths;
         }
-        col_widths = new_widths;
+        // else: too many columns for min width of 8 - allow overflow (acceptable per user)
     }
 
-    // Helper to wrap text into lines of max width
+    // Helper to wrap text into lines of max display width (UTF-8 aware)
     auto wrap_text = [](const std::string& text, size_t width) -> std::vector<std::string> {
         std::vector<std::string> lines;
         if (text.empty() || width == 0) {
@@ -1246,27 +1468,31 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
             return lines;
         }
 
-        size_t pos = 0;
-        while (pos < text.length()) {
-            size_t remaining = text.length() - pos;
-            if (remaining <= width) {
-                lines.push_back(text.substr(pos));
+        size_t byte_pos = 0;
+        while (byte_pos < text.length()) {
+            std::string remaining = text.substr(byte_pos);
+            size_t remaining_display_width = display_width(remaining);
+
+            if (remaining_display_width <= width) {
+                lines.push_back(remaining);
                 break;
             }
 
-            // Find last space within width, or break at width
-            size_t break_at = width;
-            size_t last_space = text.rfind(' ', pos + width);
-            if (last_space != std::string::npos && last_space > pos) {
-                break_at = last_space - pos;
+            // Find where to break: at width display chars from current position
+            size_t break_byte_pos = advance_by_display_chars(text, byte_pos, width);
+
+            // Look for a space to break at (search backwards from break point)
+            size_t last_space = text.rfind(' ', break_byte_pos);
+            if (last_space != std::string::npos && last_space > byte_pos) {
+                break_byte_pos = last_space;
             }
 
-            lines.push_back(text.substr(pos, break_at));
-            pos += break_at;
+            lines.push_back(text.substr(byte_pos, break_byte_pos - byte_pos));
+            byte_pos = break_byte_pos;
 
             // Skip the space if we broke at one
-            if (pos < text.length() && text[pos] == ' ') {
-                pos++;
+            if (byte_pos < text.length() && text[byte_pos] == ' ') {
+                byte_pos++;
             }
         }
 
@@ -1320,8 +1546,10 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
                     cell_line = wrapped_cells[col][line_idx];
                 }
 
-                // Pad to column width
-                size_t padding = col_widths[col] - cell_line.length();
+                // Pad to column width (use display width for UTF-8)
+                size_t cell_display_width = display_width(cell_line);
+                size_t padding = (col_widths[col] > cell_display_width)
+                    ? col_widths[col] - cell_display_width : 0;
                 result += " ";
                 if (is_header) {
                     result += ansi(BOLD);
