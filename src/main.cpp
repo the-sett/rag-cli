@@ -281,7 +281,8 @@ int main(int argc, char* argv[]) {
     // Build system prompt
     std::string system_prompt =
         "You are a specialized assistant. "
-        "Use ONLY the provided file knowledge when relevant. ";
+        "Use ONLY the provided file knowledge when relevant. "
+        "When using nested lists in markdown, indent nested items with 4 spaces. ";
 
     if (strict) {
         system_prompt +=

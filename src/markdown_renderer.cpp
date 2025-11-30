@@ -1045,9 +1045,8 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
             cmark_event_type ev_type;
 
             bool in_list = false;
-            bool in_ordered_list = false;
-            int list_item_number = 0;
-            int list_indent = 0;
+            std::vector<bool> list_ordered_stack;  // Track ordered/unordered for each nesting level
+            std::vector<int> list_number_stack;    // Track item numbers for each nesting level
             std::string current_indent;  // Indent string for nested content
 
             while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -1169,11 +1168,17 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
                         if (entering) {
                             // No blank line here - handled at the block level
                             in_list = true;
-                            in_ordered_list = (cmark_node_get_list_type(cur) == CMARK_ORDERED_LIST);
-                            list_item_number = cmark_node_get_list_start(cur);
-                            list_indent = 0;
+                            // Push this list's type and starting number onto the stacks
+                            bool is_ordered = (cmark_node_get_list_type(cur) == CMARK_ORDERED_LIST);
+                            list_ordered_stack.push_back(is_ordered);
+                            list_number_stack.push_back(cmark_node_get_list_start(cur));
                         } else {
-                            in_list = false;
+                            // Pop this list's state
+                            if (!list_ordered_stack.empty()) {
+                                list_ordered_stack.pop_back();
+                                list_number_stack.pop_back();
+                            }
+                            in_list = !list_ordered_stack.empty();
                             // No blank line here - handled at the block level
                         }
                         break;
@@ -1182,17 +1187,30 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
                     case CMARK_NODE_ITEM: {
                         if (entering) {
                             // Output the list marker, content will follow from children
-                            std::string prefix = "  " + std::string(list_indent * 2, ' ');
-                            if (in_ordered_list) {
-                                prefix += std::to_string(list_item_number) + ". ";
-                                list_item_number++;
+                            int indent_level = static_cast<int>(list_ordered_stack.size()) - 1;
+                            if (indent_level < 0) indent_level = 0;
+                            std::string prefix = "  " + std::string(indent_level * 2, ' ');
+
+                            // Colors cycle based on nesting level
+                            static const char* bullet_colors[] = {CYAN, YELLOW, GREEN, MAGENTA, BLUE};
+                            const char* bullet_color = bullet_colors[indent_level % 5];
+
+                            // Get current list's ordered state and item number
+                            bool is_ordered = !list_ordered_stack.empty() && list_ordered_stack.back();
+                            if (is_ordered) {
+                                int item_num = list_number_stack.empty() ? 1 : list_number_stack.back();
+                                prefix += ansi(bullet_color) + std::to_string(item_num) + "." + ansi(RESET) + " ";
+                                // Increment the number for next item
+                                if (!list_number_stack.empty()) {
+                                    list_number_stack.back()++;
+                                }
                             } else {
-                                prefix += ansi(CYAN) + "●" + ansi(RESET) + " ";
+                                prefix += ansi(bullet_color) + "●" + ansi(RESET) + " ";
                             }
                             result += prefix;
                             // Set indent for nested content (code blocks, etc.)
-                            // "  " base + list_indent + "   " for content alignment (past the marker)
-                            current_indent = "  " + std::string(list_indent * 2, ' ') + "   ";
+                            // "  " base + indent_level + "   " for content alignment (past the marker)
+                            current_indent = "  " + std::string(indent_level * 2, ' ') + "   ";
                         } else {
                             current_indent.clear();
                         }
@@ -1370,12 +1388,16 @@ std::string MarkdownRenderer::blockquote_line(const std::string& text) const {
 }
 
 std::string MarkdownRenderer::list_item(const std::string& text, bool ordered, int number, int indent) const {
+    // Colors cycle based on nesting level
+    static const char* bullet_colors[] = {CYAN, YELLOW, GREEN, MAGENTA, BLUE};
+    const char* bullet_color = bullet_colors[indent % 5];
+
     // Base indent of 2 spaces, plus additional indent for nested lists
     std::string prefix = "  " + std::string(indent * 2, ' ');
     if (ordered) {
-        prefix += std::to_string(number) + ". ";
+        prefix += ansi(bullet_color) + std::to_string(number) + "." + ansi(RESET) + " ";
     } else {
-        prefix += ansi(CYAN) + "●" + ansi(RESET) + " ";
+        prefix += ansi(bullet_color) + "●" + ansi(RESET) + " ";
     }
     return prefix + text + "\n";
 }
