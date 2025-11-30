@@ -1990,3 +1990,63 @@ TEST_CASE("Table with inline formatting maintains alignment", "[markdown][table]
 
     check_table_alignment(output.result);
 }
+
+TEST_CASE("Table inline formatting continues across wrapped lines", "[markdown][table][inline][wrap]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, 50);  // Narrow to force wrapping
+
+    std::string table = R"(| Asset | Description |
+|-------|-------------|
+| **El Castillo Mine** | **Former producing mine** now in reclamation |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string result = output.result;
+
+    // The bold formatting should appear on both lines of "El Castillo" and "Mine"
+    // Count occurrences of bold start code - should have at least 4:
+    // "Asset" header, "Description" header, "El Castillo" (line 1), "Mine" (line 2)
+    size_t bold_count = 0;
+    size_t pos = 0;
+    while ((pos = result.find("\033[1m", pos)) != std::string::npos) {
+        bold_count++;
+        pos++;
+    }
+    // Header row has 2 bold items, "El Castillo Mine" wraps to 2 lines (needs 2 bold starts),
+    // "Former producing mine" is on one line (1 bold start)
+    // So we expect at least 5 bold start codes
+    INFO("Bold count: " << bold_count);
+    REQUIRE(bold_count >= 5);
+
+    check_table_alignment(result);
+}
+
+TEST_CASE("Table italic formatting continues across wrapped lines", "[markdown][table][inline][wrap]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, 40);  // Narrow to force wrapping
+
+    std::string table = R"(| Status |
+|--------|
+| *This is a very long italic text that will wrap* |
+)";
+
+    renderer.feed(table);
+    renderer.finish();
+
+    std::string result = output.result;
+
+    // Count italic codes - should appear on each wrapped line
+    size_t italic_count = 0;
+    size_t pos = 0;
+    while ((pos = result.find("\033[3m", pos)) != std::string::npos) {
+        italic_count++;
+        pos++;
+    }
+    // The italic text should wrap to multiple lines, each needing italic start
+    INFO("Italic count: " << italic_count);
+    REQUIRE(italic_count >= 2);  // At least 2 lines of wrapped italic text
+
+    check_table_alignment(result);
+}

@@ -1460,7 +1460,8 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
         // else: too many columns for min width of 8 - allow overflow (acceptable per user)
     }
 
-    // Helper to wrap text into lines of max display width (UTF-8 aware)
+    // Helper to wrap text into lines of max display width (UTF-8 and ANSI aware)
+    // Preserves ANSI formatting across line breaks
     auto wrap_text = [](const std::string& text, size_t width) -> std::vector<std::string> {
         std::vector<std::string> lines;
         if (text.empty() || width == 0) {
@@ -1468,6 +1469,7 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
             return lines;
         }
 
+        // First pass: split into lines based on display width
         size_t byte_pos = 0;
         while (byte_pos < text.length()) {
             std::string remaining = text.substr(byte_pos);
@@ -1478,10 +1480,10 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
                 break;
             }
 
-            // Find where to break: at width display chars from current position
+            // Find where to break
             size_t break_byte_pos = advance_by_display_chars(text, byte_pos, width);
 
-            // Look for a space to break at (search backwards from break point)
+            // Look for a space to break at
             size_t last_space = text.rfind(' ', break_byte_pos);
             if (last_space != std::string::npos && last_space > byte_pos) {
                 break_byte_pos = last_space;
@@ -1490,7 +1492,6 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
             lines.push_back(text.substr(byte_pos, break_byte_pos - byte_pos));
             byte_pos = break_byte_pos;
 
-            // Skip the space if we broke at one
             if (byte_pos < text.length() && text[byte_pos] == ' ') {
                 byte_pos++;
             }
@@ -1498,7 +1499,54 @@ std::string MarkdownRenderer::render_table(const std::string& table_text) const 
 
         if (lines.empty()) {
             lines.push_back("");
+            return lines;
         }
+
+        // Second pass: track ANSI state and fix up continuation lines
+        bool is_bold = false, is_italic = false, is_underline = false;
+        bool is_dim = false, is_cyan = false, is_blue = false;
+
+        for (size_t line_idx = 0; line_idx < lines.size(); line_idx++) {
+            // Prepend active formatting to continuation lines
+            if (line_idx > 0) {
+                std::string prefix;
+                if (is_bold) prefix += "\033[1m";
+                if (is_italic) prefix += "\033[3m";
+                if (is_underline) prefix += "\033[4m";
+                if (is_dim) prefix += "\033[2m";
+                if (is_cyan) prefix += "\033[36m";
+                if (is_blue) prefix += "\033[34m";
+                if (!prefix.empty()) {
+                    lines[line_idx] = prefix + lines[line_idx];
+                }
+            }
+
+            // Scan line to track formatting state for next line
+            const std::string& ln = lines[line_idx];
+            for (size_t i = 0; i < ln.length(); ) {
+                if (ln[i] == '\033' && i + 1 < ln.length() && ln[i + 1] == '[') {
+                    size_t j = i + 2;
+                    while (j < ln.length() && !((ln[j] >= 'A' && ln[j] <= 'Z') || (ln[j] >= 'a' && ln[j] <= 'z'))) {
+                        j++;
+                    }
+                    if (j < ln.length()) {
+                        std::string code = ln.substr(i + 2, j - i - 2);
+                        if (code == "0") {
+                            is_bold = is_italic = is_underline = is_dim = is_cyan = is_blue = false;
+                        } else if (code == "1") is_bold = true;
+                        else if (code == "3") is_italic = true;
+                        else if (code == "4") is_underline = true;
+                        else if (code == "2") is_dim = true;
+                        else if (code == "36") is_cyan = true;
+                        else if (code == "34") is_blue = true;
+                        i = j + 1;
+                        continue;
+                    }
+                }
+                i++;
+            }
+        }
+
         return lines;
     };
 
