@@ -124,7 +124,8 @@ std::string OpenAIClient::http_post_json(const std::string& url, const json& bod
 
 std::string OpenAIClient::http_post_multipart(const std::string& url,
                                                const std::string& filepath,
-                                               const std::string& purpose) {
+                                               const std::string& purpose,
+                                               const std::string& display_filename) {
     CURL* curl = curl_easy_init();
     if (!curl) {
         throw std::runtime_error("Failed to initialize CURL");
@@ -143,7 +144,16 @@ std::string OpenAIClient::http_post_multipart(const std::string& url,
     curl_mime_name(part, "file");
     curl_mime_filedata(part, filepath.c_str());
 
+<<<<<<< Updated upstream
     // Add purpose part.
+=======
+    // Override the filename if specified
+    if (!display_filename.empty()) {
+        curl_mime_filename(part, display_filename.c_str());
+    }
+
+    // Add purpose part
+>>>>>>> Stashed changes
     part = curl_mime_addpart(mime);
     curl_mime_name(part, "purpose");
     curl_mime_data(part, purpose.c_str(), CURL_ZERO_TERMINATED);
@@ -228,7 +238,24 @@ std::string OpenAIClient::upload_file(const std::string& filepath) {
     json j = json::parse(response);
 
     if (j.contains("error")) {
-        throw std::runtime_error("File upload failed: " + j["error"]["message"].get<std::string>());
+        std::string error_msg = j["error"]["message"].get<std::string>();
+
+        // Check if it's an extension error - retry with .txt appended to filename
+        if (error_msg.find("Invalid extension") != std::string::npos) {
+            std::string filename = std::filesystem::path(filepath).filename().string();
+            std::string txt_filename = filename + ".txt";
+
+            response = http_post_multipart(url, filepath, "assistants", txt_filename);
+            j = json::parse(response);
+
+            if (j.contains("error")) {
+                throw std::runtime_error("File upload failed: " + j["error"]["message"].get<std::string>());
+            }
+
+            return j.value("id", "");
+        }
+
+        throw std::runtime_error("File upload failed: " + error_msg);
     }
 
     return j.value("id", "");

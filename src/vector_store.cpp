@@ -106,12 +106,18 @@ std::string create_vector_store(
                                  std::to_string(total_files) + ") " + filepath);
         } catch (const std::exception& e) {
             console.clear_status();
-            console.print_error("Failed to upload " + filepath + ": " + e.what());
-            return "";
+            console.print_warning("Skipping " + filepath + ": " + e.what());
+            // Continue with other files instead of stopping
         }
     }
 
     console.println();
+
+    if (file_ids.empty()) {
+        console.print_error("Error: No files were successfully uploaded");
+        return "";
+    }
+
     console.print_warning("Creating vector store...");
 
     std::string vector_store_id;
@@ -133,7 +139,7 @@ std::string create_vector_store(
         return "";
     }
 
-    console.start_status("Indexing " + std::to_string(total_files) +
+    console.start_status("Indexing " + std::to_string(file_ids.size()) +
                         " files (this may take a minute)...");
 
     // Poll for batch completion

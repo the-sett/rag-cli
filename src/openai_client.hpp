@@ -101,9 +101,14 @@ private:
     // Performs an HTTP POST with multipart form data for file upload.
     std::string http_post_multipart(const std::string& url,
                                      const std::string& filepath,
+<<<<<<< Updated upstream
                                      const std::string& purpose);
 
     // Performs a streaming HTTP POST for Server-Sent Events.
+=======
+                                     const std::string& purpose,
+                                     const std::string& display_filename = "");
+>>>>>>> Stashed changes
     void http_post_stream(const std::string& url,
                           const nlohmann::json& body,
                           std::function<void(const std::string&)> on_data);

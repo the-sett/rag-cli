@@ -2,6 +2,7 @@
 #include "config.hpp"
 #include "console.hpp"
 #include <filesystem>
+#include <fstream>
 #include <algorithm>
 #include <unordered_set>
 #include <regex>
@@ -18,7 +19,54 @@ bool is_supported_extension(const std::string& filepath) {
     return SUPPORTED_EXTENSIONS.count(ext) > 0;
 }
 
+<<<<<<< Updated upstream
 // Converts a glob pattern to an equivalent regex pattern.
+=======
+bool is_text_file(const std::string& filepath) {
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file) {
+        return false;
+    }
+
+    // Read up to 8KB to check for binary content
+    constexpr size_t SAMPLE_SIZE = 8192;
+    char buffer[SAMPLE_SIZE];
+    file.read(buffer, SAMPLE_SIZE);
+    std::streamsize bytes_read = file.gcount();
+
+    if (bytes_read == 0) {
+        // Empty file - treat as text
+        return true;
+    }
+
+    // Check for null bytes or other binary indicators
+    for (std::streamsize i = 0; i < bytes_read; ++i) {
+        unsigned char c = static_cast<unsigned char>(buffer[i]);
+        // Null bytes indicate binary file
+        if (c == 0) {
+            return false;
+        }
+        // Allow common text characters: printable ASCII, tabs, newlines, carriage returns
+        // Also allow UTF-8 continuation bytes (0x80-0xBF following valid lead bytes)
+        if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Check if file is supported: known extension OR text content
+static bool is_supported_file(const std::string& filepath) {
+    if (is_supported_extension(filepath)) {
+        return true;
+    }
+    // Fall back to text content detection for unknown extensions
+    return is_text_file(filepath);
+}
+
+// Convert a glob pattern to a regex pattern
+>>>>>>> Stashed changes
 static std::string glob_to_regex(const std::string& glob) {
     std::string regex;
     regex.reserve(glob.size() * 2);
@@ -100,7 +148,7 @@ static bool is_glob_pattern(const std::string& pattern) {
 static void collect_files_recursive(const fs::path& dir, std::vector<std::string>& files) {
     try {
         for (const auto& entry : fs::recursive_directory_iterator(dir)) {
-            if (entry.is_regular_file() && is_supported_extension(entry.path().string())) {
+            if (entry.is_regular_file() && is_supported_file(entry.path().string())) {
                 files.push_back(fs::absolute(entry.path()).string());
             }
         }
@@ -130,14 +178,14 @@ std::vector<std::string> resolve_file_patterns(
                 // Directory - collect all supported files recursively
                 collect_files_recursive(p, files);
             } else if (fs::is_regular_file(p)) {
-                if (is_supported_extension(pattern)) {
+                if (is_supported_file(pattern)) {
                     std::string abs_path = fs::absolute(p).string();
                     if (seen.find(abs_path) == seen.end()) {
                         seen.insert(abs_path);
                         files.push_back(abs_path);
                     }
                 } else {
-                    console.print_warning("Warning: Unsupported file type: " + pattern);
+                    console.print_warning("Warning: Unsupported file type (binary): " + pattern);
                 }
             }
         } else {
@@ -185,8 +233,8 @@ std::vector<std::string> resolve_file_patterns(
                     }
 
                     if (matches_glob(rel_path, pattern)) {
-                        if (!is_supported_extension(rel_path)) {
-                            console.print_warning("Warning: Unsupported file type: " + rel_path);
+                        if (!is_supported_file(entry.path().string())) {
+                            console.print_warning("Warning: Unsupported file type (binary): " + rel_path);
                             continue;
                         }
 
