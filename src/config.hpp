@@ -1,5 +1,11 @@
 #pragma once
 
+/**
+ * Application configuration constants.
+ *
+ * Defines file paths, API settings, and supported file types for the crag CLI.
+ */
+
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -7,18 +13,23 @@
 
 namespace rag {
 
-// File paths
-constexpr const char* SETTINGS_FILE = ".crag.json";
-constexpr const char* LOG_DIR = "chat_logs";
+// ========== File Paths ==========
 
-// Thinking level shortcuts
+constexpr const char* SETTINGS_FILE = ".crag.json";  // Local settings file.
+constexpr const char* LOG_DIR = "chat_logs";         // Directory for chat logs.
+
+// ========== Thinking Level Shortcuts ==========
+
+// Maps command-line shorthand to OpenAI reasoning effort levels.
 inline const std::unordered_map<char, std::string> THINKING_MAP = {
     {'l', "low"},
     {'m', "medium"},
     {'h', "high"}
 };
 
-// File extensions supported by OpenAI's file_search
+// ========== Supported File Extensions ==========
+
+// File extensions supported by OpenAI's file_search tool.
 inline const std::unordered_set<std::string> SUPPORTED_EXTENSIONS = {
     // Documents
     ".txt", ".md", ".pdf", ".doc", ".docx", ".pptx", ".html", ".htm",
@@ -33,7 +44,8 @@ inline const std::unordered_set<std::string> SUPPORTED_EXTENSIONS = {
     ".toml", ".ini", ".cfg", ".conf", ".tex", ".rst", ".org", ".adoc"
 };
 
-// OpenAI API base URL
-constexpr const char* OPENAI_API_BASE = "https://api.openai.com/v1";
+// ========== API Configuration ==========
+
+constexpr const char* OPENAI_API_BASE = "https://api.openai.com/v1";  // OpenAI API base URL.
 
 } // namespace rag

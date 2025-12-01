@@ -19,30 +19,34 @@
 
 using namespace rag;
 
-// Global state for signal handler
-static Console* g_console = nullptr;
-static std::atomic<bool>* g_stop_spinner = nullptr;
+// ========== Signal Handling ==========
 
+static Console* g_console = nullptr;           // Global console for signal handler.
+static std::atomic<bool>* g_stop_spinner = nullptr;  // Global flag to stop spinner thread.
+
+// Handles SIGINT (Ctrl+C) for graceful shutdown.
 void signal_handler(int) {
-    // Restore terminal settings FIRST (before any output)
+    // Restore terminal settings FIRST (before any output).
     terminal::restore_original_settings();
 
-    // Stop the spinner thread
+    // Stop the spinner thread.
     if (g_stop_spinner) {
         g_stop_spinner->store(true);
     }
 
     if (g_console) {
-        // Clear any spinner remnants and reset terminal
-        g_console->print_raw("\r\033[K");  // Clear line
-        g_console->print_raw("\033[?25h"); // Show cursor (in case hidden)
+        // Clear any spinner remnants and reset terminal.
+        g_console->print_raw("\r\033[K");  // Clear line.
+        g_console->print_raw("\033[?25h"); // Show cursor (in case hidden).
         g_console->println();
         g_console->print_warning("Interrupted.");
     }
     std::exit(0);
 }
 
-// Select model interactively
+// ========== Interactive Selection ==========
+
+// Prompts the user to select a model from available GPT-5 models.
 std::string select_model(OpenAIClient& client, Console& console) {
     console.println();
     console.print_warning("Fetching available models...");
@@ -77,13 +81,13 @@ std::string select_model(OpenAIClient& client, Console& console) {
                 return selected;
             }
         } catch (...) {
-            // Invalid input
+            // Invalid input, continue prompting.
         }
         console.print_error("Invalid choice, try again");
     }
 }
 
-// Select reasoning effort interactively
+// Prompts the user to select a reasoning effort level.
 std::string select_reasoning_effort(Console& console) {
     console.println();
     console.print_header("Reasoning effort levels:");
@@ -108,7 +112,9 @@ std::string select_reasoning_effort(Console& console) {
     }
 }
 
-// Load or create settings
+// ========== Settings Management ==========
+
+// Loads existing settings or creates new ones through interactive setup.
 Settings load_or_create_settings(
     const std::vector<std::string>& files,
     bool reindex,
@@ -119,11 +125,11 @@ Settings load_or_create_settings(
     auto existing = load_settings();
     bool has_valid_settings = existing.has_value() && existing->is_valid();
 
-    // If reindex is requested with existing valid settings, do incremental update
+    // If reindex is requested with existing valid settings, do incremental update.
     if (reindex && has_valid_settings) {
         Settings settings = *existing;
 
-        // Use new file patterns if provided, otherwise use stored patterns
+        // Use new file patterns if provided, otherwise use stored patterns.
         std::vector<std::string> patterns_to_use = files.empty() ? settings.file_patterns : files;
 
         if (patterns_to_use.empty()) {
@@ -132,12 +138,12 @@ Settings load_or_create_settings(
             std::exit(1);
         }
 
-        // Update patterns if new ones were provided
+        // Update patterns if new ones were provided.
         if (!files.empty()) {
             settings.file_patterns = files;
         }
 
-        // Resolve current files from patterns
+        // Resolve current files from patterns.
         std::vector<std::string> current_files = resolve_file_patterns(patterns_to_use, console);
 
         if (current_files.empty()) {
@@ -145,18 +151,18 @@ Settings load_or_create_settings(
             std::exit(1);
         }
 
-        // Compute diff
+        // Compute diff.
         FileDiff diff = compute_file_diff(current_files, settings.indexed_files);
 
-        // Apply incremental updates
+        // Apply incremental updates.
         update_vector_store(settings.vector_store_id, diff, client, console, settings.indexed_files);
 
-        // Save updated settings
+        // Save updated settings.
         save_settings(settings);
         return settings;
     }
 
-    // No reindex requested and we have valid settings - just use them
+    // No reindex requested and we have valid settings - just use them.
     if (!reindex && has_valid_settings) {
         if (!non_interactive) {
             console.print_colored("Using model: ", ansi::GREEN);
@@ -182,7 +188,7 @@ Settings load_or_create_settings(
         return *existing;
     }
 
-    // First time setup - need file patterns
+    // First time setup - need file patterns.
     if (files.empty()) {
         console.print_error("Error: No files specified for indexing");
         console.println();
@@ -197,7 +203,7 @@ Settings load_or_create_settings(
         std::exit(1);
     }
 
-    // First time - select model, reasoning, and create vector store
+    // First time - select model, reasoning, and create vector store.
     Settings settings;
     settings.model = select_model(client, console);
     settings.reasoning_effort = select_reasoning_effort(console);
@@ -211,6 +217,8 @@ Settings load_or_create_settings(
     save_settings(settings);
     return settings;
 }
+
+// ========== Main Entry Point ==========
 
 int main(int argc, char* argv[]) {
     CLI::App app{"A RAG CLI tool using OpenAI's vector store and file search"};
@@ -244,16 +252,16 @@ int main(int argc, char* argv[]) {
 
     CLI11_PARSE(app, argc, argv);
 
-    // Save terminal settings before any raw mode changes
+    // Save terminal settings before any raw mode changes.
     terminal::save_original_settings();
 
     Console console;
     g_console = &console;
 
-    // Set up signal handler for graceful Ctrl+C
+    // Set up signal handler for graceful Ctrl+C.
     std::signal(SIGINT, signal_handler);
 
-    // Check for API key
+    // Check for API key.
     const char* api_key = std::getenv("OPEN_AI_API_KEY");
     if (!api_key || std::string(api_key).empty()) {
         console.print_error("Error: OPEN_AI_API_KEY environment variable not set");
@@ -262,10 +270,10 @@ int main(int argc, char* argv[]) {
 
     OpenAIClient client(api_key);
 
-    // Load or create settings
+    // Load or create settings.
     Settings settings = load_or_create_settings(files, reindex, non_interactive, client, console);
 
-    // Determine reasoning effort
+    // Determine reasoning effort.
     std::string reasoning_effort = settings.reasoning_effort;
     if (thinking != '\0') {
         auto it = THINKING_MAP.find(thinking);
@@ -278,7 +286,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Build system prompt
+    // Build system prompt.
     std::string system_prompt =
         "You are a specialized assistant. "
         "Use ONLY the provided file knowledge when relevant. "
@@ -294,14 +302,13 @@ int main(int argc, char* argv[]) {
             "state that you are extrapolating.";
     }
 
-    // Create chat session
+    // Create chat session.
     ChatSession chat(system_prompt, LOG_DIR);
 
-    // Determine if we should render markdown
-    // Markdown rendering: enabled for interactive mode without --plain
+    // Markdown rendering: enabled for interactive mode without --plain.
     bool render_markdown = !non_interactive && !plain_output;
 
-    // Process a single query
+    // Process a single query.
     auto process_query = [&](const std::string& user_input) {
         chat.add_user_message(user_input);
 
@@ -309,10 +316,10 @@ int main(int argc, char* argv[]) {
         std::atomic<bool> first_chunk{true};
         std::atomic<bool> stop_spinner{false};
 
-        // Set global pointer for signal handler
+        // Set global pointer for signal handler.
         g_stop_spinner = &stop_spinner;
 
-        // Animated spinner in background thread
+        // Animated spinner in background thread.
         std::thread spinner_thread;
         if (!non_interactive) {
             spinner_thread = std::thread([&]() {
@@ -334,7 +341,7 @@ int main(int argc, char* argv[]) {
 
         try {
             if (render_markdown) {
-                // Use markdown renderer for interactive mode
+                // Use markdown renderer for interactive mode.
                 MarkdownRenderer renderer([&](const std::string& formatted) {
                     console.print_raw(formatted);
                     console.flush();
@@ -347,7 +354,7 @@ int main(int argc, char* argv[]) {
                     reasoning_effort,
                     [&](const std::string& delta) {
                         if (first_chunk.exchange(false)) {
-                            // Stop spinner and clear the line before first output
+                            // Stop spinner and clear the line before first output.
                             stop_spinner.store(true);
                             if (spinner_thread.joinable()) {
                                 spinner_thread.join();
@@ -361,7 +368,7 @@ int main(int argc, char* argv[]) {
 
                 renderer.finish();
             } else {
-                // Raw output for non-interactive or --plain mode
+                // Raw output for non-interactive or --plain mode.
                 client.stream_response(
                     settings.model,
                     chat.get_conversation(),
@@ -369,7 +376,7 @@ int main(int argc, char* argv[]) {
                     reasoning_effort,
                     [&](const std::string& delta) {
                         if (first_chunk.exchange(false) && !non_interactive) {
-                            // Stop spinner and clear the line before first output
+                            // Stop spinner and clear the line before first output.
                             stop_spinner.store(true);
                             if (spinner_thread.joinable()) {
                                 spinner_thread.join();
@@ -387,42 +394,42 @@ int main(int argc, char* argv[]) {
                 );
             }
         } catch (const std::exception& e) {
-            // Stop spinner on error
+            // Stop spinner on error.
             stop_spinner.store(true);
             if (spinner_thread.joinable()) {
                 spinner_thread.join();
             }
             if (!non_interactive) {
-                console.print_raw("\r\033[K");  // Clear spinner line
+                console.print_raw("\r\033[K");  // Clear spinner line.
             }
             console.println();
             console.print_error("Error: " + std::string(e.what()));
         }
 
-        // Ensure spinner thread is stopped
+        // Ensure spinner thread is stopped.
         stop_spinner.store(true);
         if (spinner_thread.joinable()) {
             spinner_thread.join();
         }
 
-        // Clear global pointer now that spinner is done
+        // Clear global pointer now that spinner is done.
         g_stop_spinner = nullptr;
 
         chat.add_assistant_message(streamed_text);
     };
 
-    // Non-interactive mode
+    // Non-interactive mode.
     if (non_interactive) {
         std::string user_input;
         std::getline(std::cin, user_input);
 
-        // Read all remaining input if any
+        // Read all remaining input if any.
         std::string line;
         while (std::getline(std::cin, line)) {
             user_input += "\n" + line;
         }
 
-        // Trim whitespace
+        // Trim whitespace.
         size_t start = user_input.find_first_not_of(" \t\n\r");
         size_t end = user_input.find_last_not_of(" \t\n\r");
         if (start == std::string::npos) {
@@ -439,13 +446,13 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Interactive chat loop
+    // Interactive chat loop.
     console.println();
     console.print_header("=== RAG CLI Ready ===");
     console.println("Type 'quit' to exit. Press Enter twice quickly to submit.");
     console.println();
 
-    // Create input editor
+    // Create input editor.
     InputEditor input_editor([](const std::string& text) {
         std::cout << text;
         std::cout.flush();
@@ -454,7 +461,7 @@ int main(int argc, char* argv[]) {
     while (true) {
         std::string user_input = input_editor.read_input();
 
-        // Trim whitespace
+        // Trim whitespace.
         size_t start = user_input.find_first_not_of(" \t\n\r");
         size_t end = user_input.find_last_not_of(" \t\n\r");
         if (start != std::string::npos) {

@@ -13,12 +13,12 @@ namespace rag {
 bool is_supported_extension(const std::string& filepath) {
     fs::path p(filepath);
     std::string ext = p.extension().string();
-    // Convert to lowercase for comparison
+    // Convert to lowercase for case-insensitive comparison.
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
     return SUPPORTED_EXTENSIONS.count(ext) > 0;
 }
 
-// Convert a glob pattern to a regex pattern
+// Converts a glob pattern to an equivalent regex pattern.
 static std::string glob_to_regex(const std::string& glob) {
     std::string regex;
     regex.reserve(glob.size() * 2);
@@ -78,7 +78,7 @@ static std::string glob_to_regex(const std::string& glob) {
     return "^" + regex + "$";
 }
 
-// Check if a path matches a glob pattern
+// Returns true if path matches the glob pattern.
 static bool matches_glob(const std::string& path, const std::string& pattern) {
     std::string regex_pattern = glob_to_regex(pattern);
     try {
@@ -89,14 +89,14 @@ static bool matches_glob(const std::string& path, const std::string& pattern) {
     }
 }
 
-// Check if pattern contains glob characters
+// Returns true if pattern contains glob wildcard characters.
 static bool is_glob_pattern(const std::string& pattern) {
     return pattern.find('*') != std::string::npos ||
            pattern.find('?') != std::string::npos ||
            pattern.find('[') != std::string::npos;
 }
 
-// Get all files in a directory recursively
+// Collects all supported files from a directory recursively.
 static void collect_files_recursive(const fs::path& dir, std::vector<std::string>& files) {
     try {
         for (const auto& entry : fs::recursive_directory_iterator(dir)) {
@@ -105,7 +105,7 @@ static void collect_files_recursive(const fs::path& dir, std::vector<std::string
             }
         }
     } catch (const fs::filesystem_error&) {
-        // Skip directories we can't access
+        // Skip directories we can't access.
     }
 }
 

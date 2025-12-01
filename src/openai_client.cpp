@@ -10,37 +10,39 @@ namespace rag {
 
 using json = nlohmann::json;
 
-// CURL write callback for collecting response data
+// CURL write callback for collecting response data into a string.
 static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* response = static_cast<std::string*>(userdata);
     response->append(ptr, size * nmemb);
     return size * nmemb;
 }
 
-// CURL write callback for streaming SSE data
+// Context for streaming SSE responses.
 struct StreamContext {
-    std::function<void(const std::string&)> on_data;
-    std::string buffer;
+    std::function<void(const std::string&)> on_data;  // Callback for each data event.
+    std::string buffer;                                // Partial line buffer.
 };
 
+// CURL write callback for streaming SSE data. Parses Server-Sent Events and
+// invokes the context callback for each data event.
 static size_t stream_write_callback(char* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* ctx = static_cast<StreamContext*>(userdata);
     size_t total_size = size * nmemb;
 
     ctx->buffer.append(ptr, total_size);
 
-    // Process complete SSE lines
+    // Process complete SSE lines.
     size_t pos;
     while ((pos = ctx->buffer.find("\n")) != std::string::npos) {
         std::string line = ctx->buffer.substr(0, pos);
         ctx->buffer.erase(0, pos + 1);
 
-        // Remove \r if present
+        // Remove trailing carriage return if present.
         if (!line.empty() && line.back() == '\r') {
             line.pop_back();
         }
 
-        // SSE format: "data: {...}" or "data: [DONE]"
+        // SSE format: "data: {...}" or "data: [DONE]".
         if (line.substr(0, 6) == "data: ") {
             std::string data = line.substr(6);
             if (data != "[DONE]") {
@@ -136,12 +138,12 @@ std::string OpenAIClient::http_post_multipart(const std::string& url,
 
     curl_mime* mime = curl_mime_init(curl);
 
-    // Add file part
+    // Add file part.
     curl_mimepart* part = curl_mime_addpart(mime);
     curl_mime_name(part, "file");
     curl_mime_filedata(part, filepath.c_str());
 
-    // Add purpose part
+    // Add purpose part.
     part = curl_mime_addpart(mime);
     curl_mime_name(part, "purpose");
     curl_mime_data(part, purpose.c_str(), CURL_ZERO_TERMINATED);
@@ -208,7 +210,7 @@ std::vector<std::string> OpenAIClient::list_models() {
     if (j.contains("data") && j["data"].is_array()) {
         for (const auto& model : j["data"]) {
             std::string id = model.value("id", "");
-            // Filter to gpt-5* models only
+            // Filter to gpt-5* models only.
             if (id.substr(0, 5) == "gpt-5") {
                 models.push_back(id);
             }
@@ -344,13 +346,13 @@ void OpenAIClient::stream_response(
 ) {
     std::string url = std::string(OPENAI_API_BASE) + "/responses";
 
-    // Build conversation JSON
+    // Build conversation JSON.
     json input = json::array();
     for (const auto& msg : conversation) {
         input.push_back(msg.to_json());
     }
 
-    // Build request body
+    // Build request body.
     json body = {
         {"model", model},
         {"input", input},
@@ -367,7 +369,7 @@ void OpenAIClient::stream_response(
         body["reasoning"] = {{"effort", reasoning_effort}};
     }
 
-    // Stream the response
+    // Stream the response.
     http_post_stream(url, body, [&](const std::string& data) {
         try {
             json event = json::parse(data);
@@ -380,7 +382,7 @@ void OpenAIClient::stream_response(
                 }
             }
         } catch (const json::exception&) {
-            // Ignore malformed JSON in stream
+            // Ignore malformed JSON in stream.
         }
     });
 }
