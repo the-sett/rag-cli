@@ -144,16 +144,12 @@ std::string OpenAIClient::http_post_multipart(const std::string& url,
     curl_mime_name(part, "file");
     curl_mime_filedata(part, filepath.c_str());
 
-<<<<<<< Updated upstream
-    // Add purpose part.
-=======
-    // Override the filename if specified
+    // Override the filename if specified.
     if (!display_filename.empty()) {
         curl_mime_filename(part, display_filename.c_str());
     }
 
-    // Add purpose part
->>>>>>> Stashed changes
+    // Add purpose part.
     part = curl_mime_addpart(mime);
     curl_mime_name(part, "purpose");
     curl_mime_data(part, purpose.c_str(), CURL_ZERO_TERMINATED);

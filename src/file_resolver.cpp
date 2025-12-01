@@ -19,35 +19,32 @@ bool is_supported_extension(const std::string& filepath) {
     return SUPPORTED_EXTENSIONS.count(ext) > 0;
 }
 
-<<<<<<< Updated upstream
-// Converts a glob pattern to an equivalent regex pattern.
-=======
 bool is_text_file(const std::string& filepath) {
     std::ifstream file(filepath, std::ios::binary);
     if (!file) {
         return false;
     }
 
-    // Read up to 8KB to check for binary content
+    // Read up to 8KB to check for binary content.
     constexpr size_t SAMPLE_SIZE = 8192;
     char buffer[SAMPLE_SIZE];
     file.read(buffer, SAMPLE_SIZE);
     std::streamsize bytes_read = file.gcount();
 
     if (bytes_read == 0) {
-        // Empty file - treat as text
+        // Empty file - treat as text.
         return true;
     }
 
-    // Check for null bytes or other binary indicators
+    // Check for null bytes or other binary indicators.
     for (std::streamsize i = 0; i < bytes_read; ++i) {
         unsigned char c = static_cast<unsigned char>(buffer[i]);
-        // Null bytes indicate binary file
+        // Null bytes indicate binary file.
         if (c == 0) {
             return false;
         }
-        // Allow common text characters: printable ASCII, tabs, newlines, carriage returns
-        // Also allow UTF-8 continuation bytes (0x80-0xBF following valid lead bytes)
+        // Allow common text characters: printable ASCII, tabs, newlines, carriage returns.
+        // Also allow UTF-8 continuation bytes (0x80-0xBF following valid lead bytes).
         if (c < 0x20 && c != '\t' && c != '\n' && c != '\r') {
             return false;
         }
@@ -56,17 +53,16 @@ bool is_text_file(const std::string& filepath) {
     return true;
 }
 
-// Check if file is supported: known extension OR text content
+// Returns true if file is supported: known extension OR text content.
 static bool is_supported_file(const std::string& filepath) {
     if (is_supported_extension(filepath)) {
         return true;
     }
-    // Fall back to text content detection for unknown extensions
+    // Fall back to text content detection for unknown extensions.
     return is_text_file(filepath);
 }
 
-// Convert a glob pattern to a regex pattern
->>>>>>> Stashed changes
+// Converts a glob pattern to an equivalent regex pattern.
 static std::string glob_to_regex(const std::string& glob) {
     std::string regex;
     regex.reserve(glob.size() * 2);
