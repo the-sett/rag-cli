@@ -8,6 +8,7 @@
 #include "markdown_renderer.hpp"
 #include "input_editor.hpp"
 #include "terminal.hpp"
+#include "http_server.hpp"
 
 #include <CLI/CLI.hpp>
 #include <iostream>
@@ -250,6 +251,19 @@ int main(int argc, char* argv[]) {
     app.add_flag("--plain", plain_output,
                  "Disable markdown rendering, output raw text");
 
+    bool server_mode = false;
+    app.add_flag("-s,--server", server_mode,
+                 "Run in server mode with web interface");
+
+    int server_port = 8192;
+    app.add_option("-p,--port", server_port,
+                   "Port for web server (default: 8192)")
+        ->check(CLI::Range(1, 65535));
+
+    std::string server_address = "0.0.0.0";
+    app.add_option("--address", server_address,
+                   "Bind address for web server (default: 0.0.0.0)");
+
     CLI11_PARSE(app, argc, argv);
 
     // Save terminal settings before any raw mode changes.
@@ -260,6 +274,29 @@ int main(int argc, char* argv[]) {
 
     // Set up signal handler for graceful Ctrl+C.
     std::signal(SIGINT, signal_handler);
+
+    // Server mode - start HTTP server and serve web UI.
+    if (server_mode) {
+        console.println();
+        console.print_header("=== CRAG Web Server ===");
+
+        HttpServer server(WWW_DIR);
+
+        server.on_start([&console](const std::string& address, int port) {
+            console.println();
+            std::string display_addr = (address == "0.0.0.0") ? "localhost" : address;
+            console.print_success("Server running at http://" + display_addr + ":" + std::to_string(port));
+            console.println("Press Ctrl+C to stop.");
+            console.println();
+        });
+
+        if (!server.start(server_address, server_port)) {
+            console.print_error("Failed to start server on " + server_address + ":" + std::to_string(server_port));
+            return 1;
+        }
+
+        return 0;
+    }
 
     // Check for API key.
     const char* api_key = std::getenv("OPEN_AI_API_KEY");

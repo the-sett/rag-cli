@@ -12,6 +12,48 @@ find_package(CLI11 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CMARK REQUIRED libcmark)
 
+# Fetch cpp-httplib for HTTP server
+include(FetchContent)
+FetchContent_Declare(
+    httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.15.3
+)
+FetchContent_MakeAvailable(httplib)
+
+# Elm build - compile Elm to JavaScript
+find_program(ELM_EXECUTABLE elm)
+if(ELM_EXECUTABLE)
+    set(ELM_OUTPUT "${CMAKE_BINARY_DIR}/www/elm.js")
+    set(ELM_SOURCE "${CMAKE_SOURCE_DIR}/src/elm/Main.elm")
+    set(WWW_DIR "${CMAKE_BINARY_DIR}/www")
+
+    # Create www directory
+    file(MAKE_DIRECTORY ${WWW_DIR})
+
+    # Custom command to compile Elm
+    add_custom_command(
+        OUTPUT ${ELM_OUTPUT}
+        COMMAND ${ELM_EXECUTABLE} make ${ELM_SOURCE} --output=${ELM_OUTPUT} --optimize
+        DEPENDS ${ELM_SOURCE}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Compiling Elm application"
+    )
+
+    # Copy index.html to build directory
+    add_custom_command(
+        OUTPUT ${WWW_DIR}/index.html
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/www/index.html ${WWW_DIR}/index.html
+        DEPENDS ${CMAKE_SOURCE_DIR}/www/index.html
+        COMMENT "Copying index.html"
+    )
+
+    # Custom target for Elm build
+    add_custom_target(elm_build ALL DEPENDS ${ELM_OUTPUT} ${WWW_DIR}/index.html)
+else()
+    message(WARNING "Elm compiler not found. Web UI will not be built.")
+endif()
+
 # Source files
 set(SOURCES
     src/main.cpp
@@ -24,9 +66,13 @@ set(SOURCES
     src/markdown_renderer.cpp
     src/terminal.cpp
     src/input_editor.cpp
+    src/http_server.cpp
 )
 
 add_executable(crag ${SOURCES})
+
+# Pass www directory path as compile definition
+target_compile_definitions(crag PRIVATE WWW_DIR="${CMAKE_BINARY_DIR}/www")
 
 target_include_directories(crag PRIVATE src ${CMARK_INCLUDE_DIRS})
 target_link_libraries(crag PRIVATE
@@ -34,6 +80,7 @@ target_link_libraries(crag PRIVATE
     CLI11::CLI11
     CURL::libcurl
     ${CMARK_LIBRARIES}
+    httplib::httplib
 )
 
 # Install
@@ -56,15 +103,18 @@ if(BUILD_TESTS)
         src/markdown_renderer.cpp
         src/terminal.cpp
         src/input_editor.cpp
+        src/http_server.cpp
     )
 
     add_library(crag_lib STATIC ${LIB_SOURCES})
+    target_compile_definitions(crag_lib PUBLIC WWW_DIR="${CMAKE_BINARY_DIR}/www")
     target_include_directories(crag_lib PUBLIC src ${CMARK_INCLUDE_DIRS})
     target_link_libraries(crag_lib PUBLIC
         nlohmann_json::nlohmann_json
         CLI11::CLI11
         CURL::libcurl
         ${CMARK_LIBRARIES}
+        httplib::httplib
     )
 
     # Test executable
