@@ -5,8 +5,10 @@ A command-line tool for building and querying a knowledge base using OpenAI's ve
 **Key features:**
 - Index documents, code, and data files with a single command
 - Interactive chat with context-aware responses from your knowledge base
+- Rich markdown rendering with syntax-highlighted code blocks and formatted tables
 - Non-interactive mode for scripting and automation
 - Support for OpenAI's reasoning models with configurable thinking levels
+- Incremental re-indexing (only uploads changed files)
 - Strict mode to ensure answers come only from indexed content
 
 ## Prerequisites
@@ -135,7 +137,7 @@ Once indexed, run without arguments to start chatting:
 crag
 ```
 
-Type your questions and the AI will search your indexed files for relevant context. Type `quit` or `exit` to end the session.
+Type your questions and the AI will search your indexed files for relevant context. Press Enter twice quickly to submit multi-line input. Type `quit` or `exit` to end the session.
 
 ### Re-indexing
 
@@ -145,7 +147,7 @@ To update your knowledge base with new or changed files:
 crag --reindex 'docs/**/*.md'
 ```
 
-This creates a new vector store and prompts you to select model and thinking level again.
+This performs an incremental update, uploading only new or modified files and removing deleted ones from the vector store. Your model and thinking level settings are preserved.
 
 ### Non-interactive Mode
 
@@ -162,10 +164,11 @@ This reads the query from stdin, outputs the response to stdout, and exits.
 | Option | Description |
 |--------|-------------|
 | `FILE ...` | Files or glob patterns to index |
-| `--reindex` | Force re-upload and reindex files |
+| `--reindex` | Incrementally update the index (add new, update changed, remove deleted) |
 | `--strict` | Only answer if information is in the indexed files |
 | `-t`, `--thinking` | Override thinking level: `l`=low, `m`=medium, `h`=high |
 | `-n`, `--non-interactive` | Read query from stdin, write response to stdout, exit |
+| `--plain` | Disable markdown rendering, output raw text |
 
 ### Glob Pattern Examples
 
@@ -191,16 +194,21 @@ crag supports a wide range of file types:
 ```
 rag-cli/
 ├── src/
-│   ├── main.cpp           # Entry point and CLI handling
-│   ├── config.hpp         # Constants and configuration
-│   ├── console.hpp/cpp    # Terminal output with ANSI colors
-│   ├── settings.hpp/cpp   # Settings file management
+│   ├── main.cpp                 # Entry point and CLI handling
+│   ├── config.hpp               # Constants and configuration
+│   ├── console.hpp/cpp          # Terminal output with ANSI colors
+│   ├── settings.hpp/cpp         # Settings file management
 │   ├── file_resolver.hpp/cpp    # Glob pattern resolution
 │   ├── openai_client.hpp/cpp    # OpenAI API client
 │   ├── vector_store.hpp/cpp     # Vector store management
-│   └── chat.hpp/cpp       # Chat session and logging
-├── CMakeLists.txt         # Build configuration
-├── CMakePresets.json      # CMake presets for Ninja/Clang
+│   ├── chat.hpp/cpp             # Chat session and logging
+│   ├── markdown_renderer.hpp/cpp # Streaming markdown rendering
+│   ├── input_editor.hpp/cpp     # Rich terminal input editing
+│   └── terminal.hpp/cpp         # Terminal settings management
+├── tests/
+│   └── test_markdown_renderer.cpp # Markdown renderer unit tests
+├── CMakeLists.txt               # Build configuration
+├── CMakePresets.json            # CMake presets for Ninja/Clang
 ├── LICENSE
 └── README.md
 ```
