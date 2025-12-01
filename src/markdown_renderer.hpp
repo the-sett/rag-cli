@@ -87,6 +87,8 @@ private:
 
     // Track if previous block was a list item (for streaming list item sequences)
     bool prev_was_list_item_ = false;
+    int prev_list_item_indent_ = -1;  // Indent level of previous list item (-1 = no previous)
+    bool prev_list_item_had_nested_ = false;  // Whether previous item had nested content
 
     // Block detection and extraction
     bool has_complete_block() const;
@@ -96,6 +98,7 @@ private:
     bool is_table_row(const std::string& line) const;
     bool is_table_separator(const std::string& line) const;
     bool is_list_item(const std::string& line) const;
+    int get_list_item_indent(const std::string& line) const;  // -1 if not a list item
     bool is_heading(const std::string& line) const;
     bool is_blockquote(const std::string& line) const;
 

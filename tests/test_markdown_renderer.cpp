@@ -2148,3 +2148,241 @@ TEST_CASE("Content after long block renders correctly", "[markdown][buffering]")
     REQUIRE(result.find("Row 29") != std::string::npos);
     REQUIRE(result.find("paragraph after the table") != std::string::npos);
 }
+
+// ============================================================================
+// Nested list tests
+// ============================================================================
+
+TEST_CASE("Nested unordered list inside ordered list has extra indentation", "[markdown][lists][nested]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string input = R"(1. First item
+   - Nested bullet one
+   - Nested bullet two
+
+)";
+    renderer.feed(input);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Both the numbered item and bullets should be present
+    REQUIRE(stripped.find("1.") != std::string::npos);
+    REQUIRE(stripped.find("First item") != std::string::npos);
+    REQUIRE(stripped.find("Nested bullet one") != std::string::npos);
+    REQUIRE(stripped.find("Nested bullet two") != std::string::npos);
+
+    // The nested bullets should have MORE indentation than the parent item
+    // Parent item starts with "  1." (2 spaces + number)
+    // Nested bullets should start with "    ●" (4 spaces + bullet)
+    size_t numbered_pos = stripped.find("1.");
+    size_t bullet_pos = stripped.find("●");
+    REQUIRE(numbered_pos != std::string::npos);
+    REQUIRE(bullet_pos != std::string::npos);
+
+    // Count leading spaces for numbered item (should be 2)
+    size_t num_line_start = stripped.rfind('\n', numbered_pos);
+    if (num_line_start == std::string::npos) num_line_start = 0;
+    else num_line_start++;
+    size_t num_indent = numbered_pos - num_line_start;
+
+    // Count leading spaces for bullet item (should be more than numbered)
+    size_t bullet_line_start = stripped.rfind('\n', bullet_pos);
+    if (bullet_line_start == std::string::npos) bullet_line_start = 0;
+    else bullet_line_start++;
+    size_t bullet_indent = bullet_pos - bullet_line_start;
+
+    INFO("Numbered item indent: " << num_indent);
+    INFO("Bullet item indent: " << bullet_indent);
+    REQUIRE(bullet_indent > num_indent);
+}
+
+TEST_CASE("Nested ordered list inside unordered list has extra indentation", "[markdown][lists][nested]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string input = R"(- Parent bullet
+  1. Nested number one
+  2. Nested number two
+
+)";
+    renderer.feed(input);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // All items should be present
+    REQUIRE(stripped.find("Parent bullet") != std::string::npos);
+    REQUIRE(stripped.find("Nested number one") != std::string::npos);
+    REQUIRE(stripped.find("Nested number two") != std::string::npos);
+
+    // The nested numbered items should have MORE indentation than the parent bullet
+    size_t bullet_pos = stripped.find("●");
+    size_t first_num = stripped.find("1.");
+    REQUIRE(bullet_pos != std::string::npos);
+    REQUIRE(first_num != std::string::npos);
+
+    // Count leading spaces for bullet
+    size_t bullet_line_start = stripped.rfind('\n', bullet_pos);
+    if (bullet_line_start == std::string::npos) bullet_line_start = 0;
+    else bullet_line_start++;
+    size_t bullet_indent = bullet_pos - bullet_line_start;
+
+    // Count leading spaces for first numbered item
+    size_t num_line_start = stripped.rfind('\n', first_num);
+    if (num_line_start == std::string::npos) num_line_start = 0;
+    else num_line_start++;
+    size_t num_indent = first_num - num_line_start;
+
+    INFO("Bullet item indent: " << bullet_indent);
+    INFO("Numbered item indent: " << num_indent);
+    REQUIRE(num_indent > bullet_indent);
+}
+
+TEST_CASE("Deeply nested lists have increasing indentation", "[markdown][lists][nested]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string input = R"(1. Level 1
+   - Level 2
+     - Level 3
+
+)";
+    renderer.feed(input);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    REQUIRE(stripped.find("Level 1") != std::string::npos);
+    REQUIRE(stripped.find("Level 2") != std::string::npos);
+    REQUIRE(stripped.find("Level 3") != std::string::npos);
+
+    // Find all bullet positions
+    std::vector<size_t> bullet_positions;
+    size_t pos = 0;
+    while ((pos = stripped.find("●", pos)) != std::string::npos) {
+        bullet_positions.push_back(pos);
+        pos += 3;  // UTF-8 bullet is 3 bytes
+    }
+
+    // Should have 2 bullets (Level 2 and Level 3)
+    REQUIRE(bullet_positions.size() == 2);
+
+    // Calculate indents
+    auto get_indent = [&](size_t char_pos) -> size_t {
+        size_t line_start = stripped.rfind('\n', char_pos);
+        if (line_start == std::string::npos) line_start = 0;
+        else line_start++;
+        return char_pos - line_start;
+    };
+
+    size_t indent_level2 = get_indent(bullet_positions[0]);
+    size_t indent_level3 = get_indent(bullet_positions[1]);
+
+    INFO("Level 2 indent: " << indent_level2);
+    INFO("Level 3 indent: " << indent_level3);
+    REQUIRE(indent_level3 > indent_level2);
+}
+
+TEST_CASE("Multiple numbered list items with nested bullets", "[markdown][lists][nested]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    std::string input = R"(1. First numbered item
+   - Bullet under first
+   - Another bullet
+
+2. Second numbered item
+   - Bullet under second
+
+)";
+    renderer.feed(input);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // All items should be present
+    REQUIRE(stripped.find("1.") != std::string::npos);
+    REQUIRE(stripped.find("First numbered item") != std::string::npos);
+    REQUIRE(stripped.find("Bullet under first") != std::string::npos);
+    REQUIRE(stripped.find("2.") != std::string::npos);
+    REQUIRE(stripped.find("Second numbered item") != std::string::npos);
+    REQUIRE(stripped.find("Bullet under second") != std::string::npos);
+
+    // Count bullets - should be 3 total
+    size_t bullet_count = 0;
+    size_t pos = 0;
+    while ((pos = stripped.find("●", pos)) != std::string::npos) {
+        bullet_count++;
+        pos += 3;
+    }
+    REQUIRE(bullet_count == 3);
+}
+
+// ============================================================================
+// Ordered list item spacing tests
+// ============================================================================
+
+TEST_CASE("Blank lines at nesting level boundaries", "[markdown][lists][spacing]") {
+    OutputCollector output;
+    MarkdownRenderer renderer(std::ref(output), true, -1);
+
+    // Structure:
+    // 1. Parent item
+    //    - nested (level 2)
+    //    - nested (level 2)
+    //      - deeply nested (level 3)
+    // 2. Next parent
+    //
+    // Expected output with blank lines at each nesting boundary:
+    // 1. Parent item
+    //
+    //   ● nested
+    //   ● nested
+    //
+    //     ● deeply nested
+    //
+    // 2. Next parent
+
+    std::string input = R"(1. Parent item
+   - nested one
+   - nested two
+     - deeply nested
+
+2. Next parent
+
+)";
+    renderer.feed(input);
+    renderer.finish();
+
+    std::string stripped = strip_ansi(output.result);
+
+    // Find key positions
+    size_t parent_pos = stripped.find("1.");
+    size_t nested_one_pos = stripped.find("nested one");
+    size_t nested_two_pos = stripped.find("nested two");
+    size_t deep_pos = stripped.find("deeply nested");
+    size_t next_parent_pos = stripped.find("2.");
+
+    REQUIRE(parent_pos != std::string::npos);
+    REQUIRE(nested_one_pos != std::string::npos);
+    REQUIRE(nested_two_pos != std::string::npos);
+    REQUIRE(deep_pos != std::string::npos);
+    REQUIRE(next_parent_pos != std::string::npos);
+
+    // Blank line between parent and first nested item
+    std::string between_parent_and_nested = stripped.substr(parent_pos, nested_one_pos - parent_pos);
+    INFO("Between parent and nested: \"" << between_parent_and_nested << "\"");
+    REQUIRE(between_parent_and_nested.find("\n\n") != std::string::npos);
+
+    // Blank line between nested two and deeply nested
+    std::string between_nested_and_deep = stripped.substr(nested_two_pos, deep_pos - nested_two_pos);
+    INFO("Between nested and deep: \"" << between_nested_and_deep << "\"");
+    REQUIRE(between_nested_and_deep.find("\n\n") != std::string::npos);
+
+    // Blank line between deeply nested and next parent
+    std::string between_deep_and_next = stripped.substr(deep_pos, next_parent_pos - deep_pos);
+    INFO("Between deep and next parent: \"" << between_deep_and_next << "\"");
+    REQUIRE(between_deep_and_next.find("\n\n") != std::string::npos);
+}

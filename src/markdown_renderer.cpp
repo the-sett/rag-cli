@@ -230,6 +230,8 @@ void MarkdownRenderer::finish() {
     code_fence_info_.clear();
     needs_blank_before_next_ = false;
     prev_was_list_item_ = false;
+    prev_list_item_indent_ = -1;
+    prev_list_item_had_nested_ = false;
 }
 
 void MarkdownRenderer::output_raw(const std::string& text) {
@@ -568,15 +570,20 @@ bool MarkdownRenderer::is_table_separator(const std::string& line) const {
 }
 
 bool MarkdownRenderer::is_list_item(const std::string& line) const {
+    return get_list_item_indent(line) >= 0;
+}
+
+int MarkdownRenderer::get_list_item_indent(const std::string& line) const {
     // List items start with *, -, + (unordered) or digits followed by . or ) (ordered)
-    // Up to 3 leading spaces allowed
+    // Returns the number of leading spaces (indent level), or -1 if not a list item
+    // Note: CommonMark allows any amount of leading spaces for nested lists
     size_t start = 0;
-    while (start < line.length() && start < 3 && line[start] == ' ') {
+    while (start < line.length() && line[start] == ' ') {
         start++;
     }
 
     if (start >= line.length()) {
-        return false;
+        return -1;
     }
 
     char c = line[start];
@@ -584,7 +591,9 @@ bool MarkdownRenderer::is_list_item(const std::string& line) const {
     // Unordered list markers: *, -, +
     if (c == '*' || c == '-' || c == '+') {
         // Must be followed by space (or end of line for empty item)
-        return start + 1 >= line.length() || line[start + 1] == ' ';
+        if (start + 1 >= line.length() || line[start + 1] == ' ') {
+            return static_cast<int>(start);
+        }
     }
 
     // Ordered list: digit(s) followed by . or )
@@ -595,11 +604,13 @@ bool MarkdownRenderer::is_list_item(const std::string& line) const {
         }
         if (i < line.length() && (line[i] == '.' || line[i] == ')')) {
             // Must be followed by space (or end of line)
-            return i + 1 >= line.length() || line[i + 1] == ' ';
+            if (i + 1 >= line.length() || line[i + 1] == ' ') {
+                return static_cast<int>(start);
+            }
         }
     }
 
-    return false;
+    return -1;
 }
 
 bool MarkdownRenderer::is_heading(const std::string& line) const {
@@ -725,9 +736,10 @@ bool MarkdownRenderer::has_complete_block() const {
         return false;  // All lines are blockquote, wait for terminator
     }
 
-    // List item: complete when we see the NEXT list item or a non-list/non-continuation line
-    // This allows rendering each item individually
-    if (is_list_item(first_line)) {
+    // List item: complete when we see a SIBLING list item (same or less indent) or
+    // a non-list/non-continuation line. Nested list items (more indent) are included.
+    int first_indent = get_list_item_indent(first_line);
+    if (first_indent >= 0) {
         size_t pos = first_newline + 1;
         while (pos < buffer_.length()) {
             size_t next_newline = buffer_.find('\n', pos);
@@ -736,9 +748,16 @@ bool MarkdownRenderer::has_complete_block() const {
             }
             std::string line = buffer_.substr(pos, next_newline - pos);
 
-            // If we see another list item, the FIRST item is complete
-            if (is_list_item(line)) {
-                return true;
+            // Check if this is a list item
+            int line_indent = get_list_item_indent(line);
+            if (line_indent >= 0) {
+                // It's a list item - check if it's a sibling (same or less indent)
+                if (line_indent <= first_indent) {
+                    return true;  // Sibling item - current block is complete
+                }
+                // Nested item (more indent) - continue accumulating
+                pos = next_newline + 1;
+                continue;
             }
 
             // If we see a non-list, non-continuation line, the list item is complete
@@ -905,8 +924,9 @@ std::string MarkdownRenderer::extract_complete_block() {
         return block;
     }
 
-    // List item: extract just the first item (until next list item or non-continuation)
-    if (is_list_item(first_line)) {
+    // List item: extract the item with any nested lists (until sibling item or non-continuation)
+    int first_indent = get_list_item_indent(first_line);
+    if (first_indent >= 0) {
         size_t item_end = first_newline;
         size_t pos = first_newline + 1;
 
@@ -917,9 +937,17 @@ std::string MarkdownRenderer::extract_complete_block() {
             }
             std::string line = buffer_.substr(pos, next_newline - pos);
 
-            // If we see another list item, stop - that's the next item
-            if (is_list_item(line)) {
-                break;
+            // Check if this is a list item
+            int line_indent = get_list_item_indent(line);
+            if (line_indent >= 0) {
+                // It's a list item - check if it's a sibling (same or less indent)
+                if (line_indent <= first_indent) {
+                    break;  // Sibling item - stop here
+                }
+                // Nested item (more indent) - include it
+                item_end = next_newline;
+                pos = next_newline + 1;
+                continue;
             }
 
             // Continuation lines (indented) or empty lines belong to this item
@@ -1009,19 +1037,71 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
         }
     }
 
-    // Determine if this block needs blank before/after
-    // Special case: consecutive list items don't need blank lines between them
-    bool is_continuing_list = is_list_block && prev_was_list_item_;
+    // Get indent level of current list block and check for nested content (for spacing decisions)
+    int current_list_indent = -1;
+    bool current_list_has_nested = false;
+    if (is_list_block) {
+        size_t first_non_space = markdown.find_first_not_of(" \n");
+        if (first_non_space != std::string::npos) {
+            std::string first_line = markdown.substr(first_non_space);
+            size_t nl = first_line.find('\n');
+            if (nl != std::string::npos) {
+                first_line = first_line.substr(0, nl);
+            }
+            current_list_indent = get_list_item_indent(first_line);
 
-    bool needs_blank_before = (is_list_block || is_table_block || is_blockquote_block || is_code_block_type || is_heading_block) && !is_continuing_list;
+            // Check if this block has nested list items (more indented lines after the first)
+            size_t pos = markdown.find('\n', first_non_space);
+            while (pos != std::string::npos && pos + 1 < markdown.length()) {
+                size_t line_start = pos + 1;
+                size_t line_end = markdown.find('\n', line_start);
+                if (line_end == std::string::npos) line_end = markdown.length();
+                std::string line = markdown.substr(line_start, line_end - line_start);
+
+                int line_indent = get_list_item_indent(line);
+                if (line_indent > current_list_indent) {
+                    current_list_has_nested = true;
+                    break;
+                }
+                pos = line_end;
+            }
+        }
+    }
+
+    // Determine if this block needs blank before/after
+    // For list items: nested items (more indent) don't need blank lines after parent
+    // Sibling items get blank line ONLY if the previous item had nested content
+    bool is_continuing_nested_list = is_list_block && prev_was_list_item_ &&
+                                      prev_list_item_indent_ >= 0 &&
+                                      current_list_indent > prev_list_item_indent_;
+
+    // For sibling list items (same indent level), only add blank line if previous had nested content
+    bool is_sibling_after_nested = is_list_block && prev_was_list_item_ &&
+                                    prev_list_item_indent_ >= 0 &&
+                                    current_list_indent == prev_list_item_indent_ &&
+                                    prev_list_item_had_nested_;
+
+    bool needs_blank_before = (is_list_block || is_table_block || is_blockquote_block || is_code_block_type || is_heading_block) && !is_continuing_nested_list;
     bool needs_blank_after = is_list_block || is_table_block || is_heading_block || is_blockquote_block || is_code_block_type;
 
     // Build result with proper blank line handling
     std::string result;
 
-    // Add blank line before if needed (merging with previous block's blank-after)
-    // But don't add if this is a continuation of a list sequence
-    if ((needs_blank_before || needs_blank_before_next_) && !is_continuing_list) {
+    // Add blank line before if needed
+    // For continuing list: only add if previous item had nested content (makes it visually "loose")
+    // Otherwise, tight list items stay together
+    bool should_add_blank = false;
+    if (is_continuing_nested_list) {
+        should_add_blank = false;  // Never blank before nested item
+    } else if (is_list_block && prev_was_list_item_ && current_list_indent <= prev_list_item_indent_) {
+        // Sibling or parent-level item: blank line only if previous had nested content
+        // Do NOT use needs_blank_before_next_ here - that's for spacing after list ends
+        should_add_blank = is_sibling_after_nested;
+    } else {
+        should_add_blank = needs_blank_before || needs_blank_before_next_;
+    }
+
+    if (should_add_blank) {
         result += "\n";
     }
     // Reset the flag - we've handled the blank line (either by adding one or not needing one)
@@ -1047,6 +1127,8 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
             bool in_list = false;
             std::vector<bool> list_ordered_stack;  // Track ordered/unordered for each nesting level
             std::vector<int> list_number_stack;    // Track item numbers for each nesting level
+            std::vector<bool> list_tight_stack;    // Track tight/loose for each nesting level
+            std::vector<bool> list_first_item_stack;  // Track if we've seen first item at each level
             std::string current_indent;  // Indent string for nested content
 
             while ((ev_type = cmark_iter_next(iter)) != CMARK_EVENT_DONE) {
@@ -1166,26 +1248,48 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
 
                     case CMARK_NODE_LIST: {
                         if (entering) {
-                            // No blank line here - handled at the block level
+                            // Add blank line before nested list (when already in a list)
+                            if (in_list) {
+                                result += "\n";
+                            }
                             in_list = true;
-                            // Push this list's type and starting number onto the stacks
+                            // Push this list's type, starting number, and tight/loose state onto the stacks
                             bool is_ordered = (cmark_node_get_list_type(cur) == CMARK_ORDERED_LIST);
+                            bool is_tight = cmark_node_get_list_tight(cur);
                             list_ordered_stack.push_back(is_ordered);
                             list_number_stack.push_back(cmark_node_get_list_start(cur));
+                            list_tight_stack.push_back(is_tight);
+                            list_first_item_stack.push_back(true);  // Next item will be first
                         } else {
                             // Pop this list's state
                             if (!list_ordered_stack.empty()) {
                                 list_ordered_stack.pop_back();
                                 list_number_stack.pop_back();
+                                list_tight_stack.pop_back();
+                                list_first_item_stack.pop_back();
                             }
                             in_list = !list_ordered_stack.empty();
-                            // No blank line here - handled at the block level
+                            // Add blank line after nested list (when returning to parent list)
+                            if (in_list) {
+                                result += "\n";
+                            }
                         }
                         break;
                     }
 
                     case CMARK_NODE_ITEM: {
                         if (entering) {
+                            // For loose lists, add blank line between items (not before first)
+                            bool is_tight = !list_tight_stack.empty() && list_tight_stack.back();
+                            bool is_first = !list_first_item_stack.empty() && list_first_item_stack.back();
+                            if (!is_tight && !is_first) {
+                                result += "\n";  // Blank line before non-first item in loose list
+                            }
+                            // Mark that we've seen the first item
+                            if (!list_first_item_stack.empty()) {
+                                list_first_item_stack.back() = false;
+                            }
+
                             // Output the list marker, content will follow from children
                             int indent_level = static_cast<int>(list_ordered_stack.size()) - 1;
                             if (indent_level < 0) indent_level = 0;
@@ -1271,8 +1375,10 @@ std::string MarkdownRenderer::render_markdown(const std::string& markdown) {
     // we don't want blank lines between items, so we need to suppress the flag.
     // The flag will be set correctly when we finally exit the list.
 
-    // Track list item sequences
+    // Track list item sequences (for blank line decisions)
     prev_was_list_item_ = is_list_block;
+    prev_list_item_indent_ = current_list_indent;
+    prev_list_item_had_nested_ = current_list_has_nested;
 
     return result;
 }
