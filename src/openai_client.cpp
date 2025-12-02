@@ -392,6 +392,9 @@ void OpenAIClient::stream_response(
         body["reasoning"] = {{"effort", reasoning_effort}};
     }
 
+    // Track errors during streaming.
+    std::string stream_error;
+
     // Stream the response.
     http_post_stream(url, body, [&](const std::string& data) {
         try {
@@ -403,11 +406,30 @@ void OpenAIClient::stream_response(
                 if (!delta.empty() && on_text) {
                     on_text(delta);
                 }
+            } else if (event_type == "error") {
+                // Capture error from the stream.
+                if (event.contains("error") && event["error"].contains("message")) {
+                    stream_error = event["error"]["message"].get<std::string>();
+                } else {
+                    stream_error = "Unknown API error";
+                }
+            } else if (event_type == "response.failed") {
+                // Capture error from failed response.
+                if (event.contains("response") &&
+                    event["response"].contains("error") &&
+                    event["response"]["error"].contains("message")) {
+                    stream_error = event["response"]["error"]["message"].get<std::string>();
+                }
             }
         } catch (const json::exception&) {
             // Ignore malformed JSON in stream.
         }
     });
+
+    // Throw if we encountered an error during streaming.
+    if (!stream_error.empty()) {
+        throw std::runtime_error(stream_error);
+    }
 }
 
 } // namespace rag
