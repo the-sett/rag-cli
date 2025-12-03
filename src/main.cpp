@@ -17,6 +17,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <memory>
 
 using namespace rag;
 
@@ -264,6 +265,10 @@ int main(int argc, char* argv[]) {
     app.add_option("--address", server_address,
                    "Bind address for web server (default: 0.0.0.0)");
 
+    std::string www_dir;
+    app.add_option("--www-dir", www_dir,
+                   "Serve web files from directory instead of embedded resources (for development)");
+
     CLI11_PARSE(app, argc, argv);
 
     // Save terminal settings before any raw mode changes.
@@ -280,9 +285,17 @@ int main(int argc, char* argv[]) {
         console.println();
         console.print_header("=== CRAG Web Server ===");
 
-        HttpServer server(WWW_DIR);
+        // Use embedded resources by default, or filesystem if --www-dir specified
+        std::unique_ptr<HttpServer> server;
+        if (www_dir.empty()) {
+            server = std::make_unique<HttpServer>();
+            console.println("Serving from embedded resources");
+        } else {
+            server = std::make_unique<HttpServer>(www_dir);
+            console.println("Serving from directory: " + www_dir);
+        }
 
-        server.on_start([&console](const std::string& address, int port) {
+        server->on_start([&console](const std::string& address, int port) {
             console.println();
             std::string display_addr = (address == "0.0.0.0") ? "localhost" : address;
             console.print_success("Server running at http://" + display_addr + ":" + std::to_string(port));
@@ -290,7 +303,7 @@ int main(int argc, char* argv[]) {
             console.println();
         });
 
-        if (!server.start(server_address, server_port)) {
+        if (!server->start(server_address, server_port)) {
             console.print_error("Failed to start server on " + server_address + ":" + std::to_string(server_port));
             return 1;
         }

@@ -1,4 +1,4 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Browser
 import Html exposing (Html, div, h1, p, text)
@@ -7,11 +7,15 @@ import Html.Attributes exposing (style)
 
 main : Program () Model Msg
 main =
-    Browser.sandbox
+    Browser.element
         { init = init
         , update = update
         , view = view
+        , subscriptions = subscriptions
         }
+
+
+port consoleLog : String -> Cmd msg
 
 
 type alias Model =
@@ -22,16 +26,23 @@ type Msg
     = NoOp
 
 
-init : Model
-init =
-    {}
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( {}
+    , consoleLog "CRAG Elm application initialized"
+    )
 
 
-update : Msg -> Model -> Model
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         NoOp ->
-            model
+            ( model, Cmd.none )
+
+
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    Sub.none
 
 
 view : Model -> Html Msg

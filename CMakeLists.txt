@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(rag-cli VERSION 0.1.0 LANGUAGES CXX)
+project(rag-cli VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,6 +50,25 @@ if(ELM_EXECUTABLE)
 
     # Custom target for Elm build
     add_custom_target(elm_build ALL DEPENDS ${ELM_OUTPUT} ${WWW_DIR}/index.html)
+
+    # Embed www resources as a zip file in C++ header
+    set(WWW_ZIP "${CMAKE_BINARY_DIR}/www_resources.zip")
+    set(WWW_HEADER "${CMAKE_BINARY_DIR}/generated/www_resources.hpp")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+
+    add_custom_command(
+        OUTPUT ${WWW_HEADER}
+        COMMAND ${CMAKE_COMMAND}
+            -DWWW_DIR=${WWW_DIR}
+            -DOUTPUT_ZIP=${WWW_ZIP}
+            -DOUTPUT_HEADER=${WWW_HEADER}
+            -P ${CMAKE_SOURCE_DIR}/cmake/embed_zip.cmake
+        DEPENDS ${ELM_OUTPUT} ${WWW_DIR}/index.html ${CMAKE_SOURCE_DIR}/cmake/embed_zip.cmake
+        COMMENT "Embedding www resources"
+    )
+
+    add_custom_target(embed_www ALL DEPENDS ${WWW_HEADER})
+    add_dependencies(embed_www elm_build)
 else()
     message(WARNING "Elm compiler not found. Web UI will not be built.")
 endif()
@@ -67,14 +86,24 @@ set(SOURCES
     src/terminal.cpp
     src/input_editor.cpp
     src/http_server.cpp
+    src/embedded_resources.cpp
+    src/third_party/miniz.c
 )
 
 add_executable(crag ${SOURCES})
 
-# Pass www directory path as compile definition
-target_compile_definitions(crag PRIVATE WWW_DIR="${CMAKE_BINARY_DIR}/www")
+# Add dependency on embedded resources
+if(ELM_EXECUTABLE)
+    add_dependencies(crag embed_www)
+endif()
 
-target_include_directories(crag PRIVATE src ${CMARK_INCLUDE_DIRS})
+# Include generated headers directory
+target_include_directories(crag PRIVATE
+    src
+    ${CMAKE_BINARY_DIR}/generated
+    ${CMARK_INCLUDE_DIRS}
+)
+
 target_link_libraries(crag PRIVATE
     nlohmann_json::nlohmann_json
     CLI11::CLI11
@@ -104,11 +133,21 @@ if(BUILD_TESTS)
         src/terminal.cpp
         src/input_editor.cpp
         src/http_server.cpp
+        src/embedded_resources.cpp
+        src/third_party/miniz.c
     )
 
     add_library(crag_lib STATIC ${LIB_SOURCES})
-    target_compile_definitions(crag_lib PUBLIC WWW_DIR="${CMAKE_BINARY_DIR}/www")
-    target_include_directories(crag_lib PUBLIC src ${CMARK_INCLUDE_DIRS})
+
+    if(ELM_EXECUTABLE)
+        add_dependencies(crag_lib embed_www)
+    endif()
+
+    target_include_directories(crag_lib PUBLIC
+        src
+        ${CMAKE_BINARY_DIR}/generated
+        ${CMARK_INCLUDE_DIRS}
+    )
     target_link_libraries(crag_lib PUBLIC
         nlohmann_json::nlohmann_json
         CLI11::CLI11
