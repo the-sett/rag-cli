@@ -1,11 +1,14 @@
 module Markdown.Render exposing
     ( ChatMarkBlock(..)
+    , HeadingInfo
     , StreamState
     , initStreamState
     , feedDelta
     , finishStream
     , getPending
+    , extractHeadings
     , renderBlocks
+    , renderBlocksWithIds
     )
 
 {-| High-level API for streaming markdown rendering.
@@ -31,6 +34,14 @@ type ChatMarkBlock
     = CompleteBlock String Markdown.Block.Block
     | PendingBlock String
     | ErrorBlock String String
+
+
+{-| Information about a heading extracted from markdown.
+-}
+type alias HeadingInfo =
+    { level : Int
+    , text : String
+    }
 
 
 {-| The state for streaming markdown.
@@ -192,3 +203,100 @@ renderMarkdownBlock block =
 renderPending : String -> Html msg
 renderPending raw =
     HS.pre [ HA.class "md-pending" ] [ HS.text raw ]
+
+
+{-| Extract heading information from a list of ChatMarkBlocks.
+-}
+extractHeadings : List ChatMarkBlock -> List HeadingInfo
+extractHeadings blocks =
+    blocks
+        |> List.filterMap extractHeadingFromBlock
+
+
+extractHeadingFromBlock : ChatMarkBlock -> Maybe HeadingInfo
+extractHeadingFromBlock block =
+    case block of
+        CompleteBlock _ mdBlock ->
+            case mdBlock of
+                Markdown.Block.Heading level inlines ->
+                    Just
+                        { level = Markdown.Block.headingLevelToInt level
+                        , text = Markdown.Block.extractInlineText inlines
+                        }
+
+                _ ->
+                    Nothing
+
+        _ ->
+            Nothing
+
+
+{-| Render a list of ChatMarkBlocks to Html, adding IDs to headings.
+The idPrefix is used to generate unique IDs like "msg-0-heading-0".
+-}
+renderBlocksWithIds : String -> List ChatMarkBlock -> String -> List (Html msg)
+renderBlocksWithIds idPrefix blocks pendingText =
+    let
+        -- Render completed blocks with IDs
+        ( renderedCompleted, _ ) =
+            blocks
+                |> List.foldl
+                    (\block ( rendered, headingIdx ) ->
+                        let
+                            ( html, newIdx ) =
+                                renderChatMarkBlockWithId idPrefix headingIdx block
+                        in
+                        ( rendered ++ [ html ], newIdx )
+                    )
+                    ( [], 0 )
+
+        -- Render pending text if any
+        renderedPending =
+            if String.isEmpty (String.trim pendingText) then
+                []
+
+            else
+                [ renderPending pendingText ]
+    in
+    renderedCompleted ++ renderedPending
+
+
+{-| Render a single ChatMarkBlock, adding ID to heading if applicable.
+Returns the rendered Html and the next heading index.
+-}
+renderChatMarkBlockWithId : String -> Int -> ChatMarkBlock -> ( Html msg, Int )
+renderChatMarkBlockWithId idPrefix headingIdx block =
+    case block of
+        CompleteBlock _ parsedBlock ->
+            case parsedBlock of
+                Markdown.Block.Heading _ _ ->
+                    let
+                        headingId =
+                            idPrefix ++ "-heading-" ++ String.fromInt headingIdx
+                    in
+                    ( renderMarkdownBlockWithId headingId parsedBlock, headingIdx + 1 )
+
+                _ ->
+                    ( renderMarkdownBlock parsedBlock, headingIdx )
+
+        PendingBlock raw ->
+            ( renderPending raw, headingIdx )
+
+        ErrorBlock raw _ ->
+            ( renderPending raw, headingIdx )
+
+
+{-| Render a parsed markdown block with a specific ID.
+-}
+renderMarkdownBlockWithId : String -> Markdown.Block.Block -> Html msg
+renderMarkdownBlockWithId headingId block =
+    case Markdown.Renderer.render Markdown.StyledRenderer.renderer [ block ] of
+        Ok [ rendered ] ->
+            -- Wrap the heading in a div with the ID
+            HS.div [ HA.id headingId ] [ rendered ]
+
+        Ok rendered ->
+            HS.div [ HA.id headingId ] rendered
+
+        Err _ ->
+            HS.pre [ HA.class "md-error", HA.id headingId ] [ HS.text "Render error" ]

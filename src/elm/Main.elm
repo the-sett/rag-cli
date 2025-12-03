@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Browser
+import Browser.Dom as Dom
 import Css.Global
 import Html
 import Html.Styled as HS exposing (Html)
@@ -11,6 +12,7 @@ import Main.Style
 import Markdown.Render as MdRender exposing (ChatMarkBlock, StreamState)
 import Ports
 import Procedure.Program
+import Task
 import Websocket
 
 
@@ -61,12 +63,23 @@ type alias Model =
     , messages : List ChatMessage
     , streamState : StreamState
     , isWaitingForResponse : Bool
+    , tocEntries : List TocEntry
     }
 
 
 type alias ChatMessage =
     { role : String
     , blocks : List ChatMarkBlock
+    }
+
+
+{-| Table of contents entry derived from markdown headings.
+-}
+type alias TocEntry =
+    { id : String -- Unique DOM id for scrolling target
+    , level : Int -- Heading level (1-6)
+    , text : String -- Heading text content
+    , messageIndex : Int -- Which message this belongs to
     }
 
 
@@ -81,6 +94,8 @@ type Msg
     | UserInputChanged String
     | SendMessage
     | Reconnect
+    | ScrollToEntry String
+    | ScrollResult (Result Dom.Error ())
 
 
 
@@ -111,6 +126,7 @@ init flagsValue =
             , messages = []
             , streamState = MdRender.initStreamState
             , isWaitingForResponse = False
+            , tocEntries = []
             }
     in
     ( model
@@ -194,6 +210,40 @@ update msg model =
             , wsApi.open model.cragUrl WsOpened
             )
 
+        ScrollToEntry targetId ->
+            ( model, scrollToEntry targetId )
+
+        ScrollResult _ ->
+            -- Ignore scroll result (success or failure)
+            ( model, Cmd.none )
+
+
+{-| Scroll to a heading in the messages container.
+-}
+scrollToEntry : String -> Cmd Msg
+scrollToEntry targetId =
+    Dom.getElement targetId
+        |> Task.andThen
+            (\element ->
+                Dom.getViewportOf "messages-container"
+                    |> Task.andThen
+                        (\viewport ->
+                            let
+                                -- Calculate the target scroll position
+                                -- element.element.y is relative to the document
+                                -- We need to account for the current scroll position
+                                targetY =
+                                    element.element.y
+                                        - viewport.viewport.y
+                                        + viewport.viewport.y
+                                        - 20
+                                -- 20px padding from top
+                            in
+                            Dom.setViewportOf "messages-container" 0 (max 0 targetY)
+                        )
+            )
+        |> Task.attempt ScrollResult
+
 
 {-| Simple JSON string encoder
 -}
@@ -229,11 +279,18 @@ handleServerMessage payload model =
 
                         assistantMessage =
                             { role = "assistant", blocks = finalBlocks }
+
+                        newMessages =
+                            model.messages ++ [ assistantMessage ]
+
+                        newTocEntries =
+                            generateTocEntries newMessages
                     in
                     ( { model
-                        | messages = model.messages ++ [ assistantMessage ]
+                        | messages = newMessages
                         , streamState = MdRender.initStreamState
                         , isWaitingForResponse = False
+                        , tocEntries = newTocEntries
                       }
                     , Cmd.none
                     )
@@ -281,6 +338,38 @@ serverMessageDecoder =
             )
 
 
+{-| Generate TOC entries from all messages.
+Only extracts headings from assistant messages.
+-}
+generateTocEntries : List ChatMessage -> List TocEntry
+generateTocEntries messages =
+    messages
+        |> List.indexedMap
+            (\msgIdx message ->
+                if message.role == "assistant" then
+                    let
+                        headings =
+                            MdRender.extractHeadings message.blocks
+
+                        idPrefix =
+                            "msg-" ++ String.fromInt msgIdx
+                    in
+                    headings
+                        |> List.indexedMap
+                            (\headingIdx heading ->
+                                { id = idPrefix ++ "-heading-" ++ String.fromInt headingIdx
+                                , level = heading.level
+                                , text = heading.text
+                                , messageIndex = msgIdx
+                                }
+                            )
+
+                else
+                    []
+            )
+        |> List.concat
+
+
 
 -- Subscriptions
 
@@ -309,9 +398,16 @@ viewStyled model =
     HS.div
         [ HA.class "app-container" ]
         [ Main.Style.style |> Css.Global.global
-        , viewHeader model
-        , viewMessages model
-        , viewInput model
+        , HS.div
+            [ HA.class "main-layout" ]
+            [ viewTableOfContents model.tocEntries
+            , HS.div
+                [ HA.class "content-column" ]
+                [ viewHeader model
+                , viewMessages model
+                , viewInput model
+                ]
+            ]
         ]
 
 
@@ -361,6 +457,43 @@ viewConnectionStatus status =
         ]
 
 
+{-| Render the table of contents sidebar.
+-}
+viewTableOfContents : List TocEntry -> Html Msg
+viewTableOfContents entries =
+    HS.nav
+        [ HA.class "toc-sidebar" ]
+        [ HS.h2
+            [ HA.class "toc-title" ]
+            [ HS.text "Contents" ]
+        , if List.isEmpty entries then
+            HS.p
+                [ HA.class "toc-empty" ]
+                [ HS.text "No headings yet" ]
+
+          else
+            HS.ul
+                [ HA.class "toc-list" ]
+                (List.map viewTocEntry entries)
+        ]
+
+
+{-| Render a single TOC entry.
+-}
+viewTocEntry : TocEntry -> Html Msg
+viewTocEntry entry =
+    HS.li
+        [ HA.class "toc-entry"
+        , HA.class ("toc-level-" ++ String.fromInt entry.level)
+        ]
+        [ HS.button
+            [ HA.class "toc-link"
+            , HE.onClick (ScrollToEntry entry.id)
+            ]
+            [ HS.text entry.text ]
+        ]
+
+
 viewMessages : Model -> Html Msg
 viewMessages model =
     let
@@ -371,16 +504,18 @@ viewMessages model =
         -- Add streaming message if there's activity
         streamingMessage =
             if model.isWaitingForResponse then
-                [ viewStreamingMessage model.streamState pendingText ]
+                [ viewStreamingMessage (List.length model.messages) model.streamState pendingText ]
 
             else
                 []
 
         allContent =
-            List.map viewMessage model.messages ++ streamingMessage
+            List.indexedMap viewMessageWithIndex model.messages ++ streamingMessage
     in
     HS.div
-        [ HA.class "messages-container" ]
+        [ HA.class "messages-container"
+        , HA.id "messages-container"
+        ]
         (if List.isEmpty model.messages && not model.isWaitingForResponse then
             [ HS.p
                 [ HA.class "messages-empty" ]
@@ -392,11 +527,14 @@ viewMessages model =
         )
 
 
-viewStreamingMessage : StreamState -> String -> Html Msg
-viewStreamingMessage streamState pendingText =
+viewStreamingMessage : Int -> StreamState -> String -> Html Msg
+viewStreamingMessage msgIndex streamState pendingText =
     let
         completedBlocks =
             streamState.completedBlocks
+
+        idPrefix =
+            "msg-" ++ String.fromInt msgIndex
     in
     HS.div
         [ HA.class "message"
@@ -407,12 +545,14 @@ viewStreamingMessage streamState pendingText =
             [ HS.text "Assistant" ]
         , HS.div
             [ HA.class "message-content" ]
-            (MdRender.renderBlocks completedBlocks pendingText)
+            (MdRender.renderBlocksWithIds idPrefix completedBlocks pendingText)
         ]
 
 
-viewMessage : ChatMessage -> Html Msg
-viewMessage message =
+{-| Render a message with its index for ID generation.
+-}
+viewMessageWithIndex : Int -> ChatMessage -> Html Msg
+viewMessageWithIndex msgIndex message =
     let
         ( roleClass, label ) =
             case message.role of
@@ -427,6 +567,17 @@ viewMessage message =
 
                 _ ->
                     ( "message-assistant", message.role )
+
+        idPrefix =
+            "msg-" ++ String.fromInt msgIndex
+
+        -- Use renderBlocksWithIds for assistant messages to enable TOC navigation
+        renderedContent =
+            if message.role == "assistant" then
+                MdRender.renderBlocksWithIds idPrefix message.blocks ""
+
+            else
+                MdRender.renderBlocks message.blocks ""
     in
     HS.div
         [ HA.class "message"
@@ -437,7 +588,7 @@ viewMessage message =
             [ HS.text label ]
         , HS.div
             [ HA.class "message-content" ]
-            (MdRender.renderBlocks message.blocks "")
+            renderedContent
         ]
 
 

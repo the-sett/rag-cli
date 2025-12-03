@@ -22,6 +22,7 @@ style =
     List.concat
         [ globalStyles
         , appContainerStyles
+        , mainLayoutStyles
         , headerStyles
         , connectionStatusStyles
         , messagesStyles
@@ -278,24 +279,164 @@ globalStyles =
 appContainerStyles : List Css.Global.Snippet
 appContainerStyles =
     [ Css.Global.class "app-container"
-        [ Css.margin2 Css.zero Css.auto
-        , Css.padding2 space2 space2
+        [ Css.margin Css.zero
+        , Css.padding Css.zero
         , Css.vh 100 |> Css.height
+        , Css.width (Css.pct 100)
         , Css.displayFlex
         , Css.flexDirection Css.column
         , Css.boxSizing Css.borderBox
+        , Css.overflow Css.hidden
+        ]
+    ]
 
-        -- Fluid on mobile, fixed widths on larger screens
-        , Css.maxWidth (Css.pct 100)
+
+
+-- =============================================================================
+-- Main Layout (Two-column: TOC sidebar + content)
+-- =============================================================================
+
+
+mainLayoutStyles : List Css.Global.Snippet
+mainLayoutStyles =
+    [ Css.Global.class "main-layout"
+        [ Css.displayFlex
+        , Css.flex (Css.int 1)
+        , Css.overflow Css.hidden
+        , Css.minHeight Css.zero
+        ]
+
+    -- TOC Sidebar (left 25%)
+    , Css.Global.class "toc-sidebar"
+        [ Css.display Css.none -- Hidden on mobile
+        , Css.flexDirection Css.column
+        , Css.width (Css.pct 25)
+        , Css.minWidth (Css.px 200)
+        , Css.maxWidth (Css.px 300)
+        , Css.flexShrink Css.zero
+        , Css.overflowY Css.auto
+        , Css.overflowX Css.hidden
+        , Css.borderRight3 (Css.px 1) Css.solid colorBorderLight
+        , Css.backgroundColor colorBackgroundSecondary
+        , Css.padding space2
         , mediaMedium
-            [ Css.maxWidth containerMedium
-            , Css.padding2 space3 space2
+            [ Css.displayFlex
             ]
-        , mediaLarge
-            [ Css.maxWidth containerLarge
+        ]
+    , Css.Global.class "toc-title"
+        [ Css.fontSize (Css.rem 0.875)
+        , Css.fontWeight (Css.int 700)
+        , Css.textTransform Css.uppercase
+        , Css.letterSpacing (Css.em 0.05)
+        , Css.color colorTextSecondary
+        , Css.margin4 Css.zero Css.zero space2 Css.zero
+        , Css.paddingBottom space1
+        , Css.borderBottom3 (Css.px 1) Css.solid colorBorderLight
+        ]
+    , Css.Global.class "toc-list"
+        [ Css.listStyle Css.none
+        , Css.margin Css.zero
+        , Css.padding Css.zero
+        , Css.flex (Css.int 1)
+        , Css.overflowY Css.auto
+        ]
+    , Css.Global.class "toc-entry"
+        [ Css.margin Css.zero
+        , Css.padding Css.zero
+        ]
+    , Css.Global.class "toc-link"
+        [ Css.display Css.block
+        , Css.width (Css.pct 100)
+        , Css.padding2 space1 space1
+        , Css.border Css.zero
+        , Css.backgroundColor Css.transparent
+        , Css.color colorText
+        , Css.fontSize (Css.rem 0.875)
+        , Css.lineHeight (Css.num 1.4)
+        , Css.textAlign Css.left
+        , Css.cursor Css.pointer
+        , Css.textDecoration Css.none
+        , Css.borderRadius (Css.px 4)
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBackgroundTertiary
             ]
-        , mediaXLarge
-            [ Css.maxWidth containerXLarge
+        , Css.focus
+            [ Css.outline Css.none
+            , Css.backgroundColor colorFocus
+            , Css.color colorText
+            ]
+        ]
+
+    -- TOC indentation by heading level
+    , Css.Global.class "toc-level-1"
+        [ Css.Global.children
+            [ Css.Global.class "toc-link"
+                [ Css.paddingLeft space1
+                , Css.fontWeight (Css.int 700)
+                ]
+            ]
+        ]
+    , Css.Global.class "toc-level-2"
+        [ Css.Global.children
+            [ Css.Global.class "toc-link"
+                [ Css.paddingLeft space3
+                , Css.fontWeight (Css.int 400)
+                ]
+            ]
+        ]
+    , Css.Global.class "toc-level-3"
+        [ Css.Global.children
+            [ Css.Global.class "toc-link"
+                [ Css.paddingLeft space5
+                , Css.fontSize (Css.rem 0.8125)
+                ]
+            ]
+        ]
+    , Css.Global.class "toc-level-4"
+        [ Css.Global.children
+            [ Css.Global.class "toc-link"
+                [ Css.paddingLeft space6
+                , Css.fontSize (Css.rem 0.8125)
+                , Css.color colorTextSecondary
+                ]
+            ]
+        ]
+    , Css.Global.class "toc-level-5"
+        [ Css.Global.children
+            [ Css.Global.class "toc-link"
+                [ Css.paddingLeft space6
+                , Css.fontSize (Css.rem 0.75)
+                , Css.color colorTextSecondary
+                ]
+            ]
+        ]
+    , Css.Global.class "toc-level-6"
+        [ Css.Global.children
+            [ Css.Global.class "toc-link"
+                [ Css.paddingLeft space6
+                , Css.fontSize (Css.rem 0.75)
+                , Css.color colorTextSecondary
+                ]
+            ]
+        ]
+    , Css.Global.class "toc-empty"
+        [ Css.color colorTextSecondary
+        , Css.fontSize (Css.rem 0.875)
+        , Css.fontStyle Css.italic
+        , Css.padding space2
+        ]
+
+    -- Content column (right 75%)
+    , Css.Global.class "content-column"
+        [ Css.flex (Css.int 1)
+        , Css.displayFlex
+        , Css.flexDirection Css.column
+        , Css.minWidth Css.zero
+        , Css.overflow Css.hidden
+        , Css.padding space2
+        , mediaMedium
+            [ Css.padding space3
             ]
         ]
     ]
@@ -394,11 +535,13 @@ messagesStyles =
     [ Css.Global.class "messages-container"
         [ Css.flex (Css.int 1)
         , Css.overflowY Css.auto
+        , Css.overflowX Css.hidden
         , Css.marginBottom space2
         , Css.padding space2
         , Css.backgroundColor colorBackground
         , Css.borderRadius (Css.px 8)
         , Css.border3 (Css.px 1) Css.solid colorBorderLight
+        , Css.minHeight Css.zero -- Important for flex scroll
         , mediaMedium
             [ Css.padding space3
             , Css.marginBottom space3
