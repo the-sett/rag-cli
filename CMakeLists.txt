@@ -21,6 +21,19 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
+# Fetch IXWebSocket for WebSocket server
+set(USE_TLS OFF CACHE BOOL "Disable TLS for IXWebSocket")
+set(USE_OPEN_SSL OFF CACHE BOOL "Disable OpenSSL for IXWebSocket")
+FetchContent_Declare(
+    ixwebsocket
+    GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+    GIT_TAG v11.4.5
+)
+FetchContent_MakeAvailable(ixwebsocket)
+
+# Fetch esbuild for TypeScript compilation
+include(cmake/fetch_esbuild.cmake)
+
 # Elm build - compile Elm to JavaScript
 find_program(ELM_EXECUTABLE elm)
 if(ELM_EXECUTABLE)
@@ -40,6 +53,20 @@ if(ELM_EXECUTABLE)
         COMMENT "Compiling Elm application"
     )
 
+    # Custom command to compile TypeScript with esbuild
+    set(TS_SOURCE "${CMAKE_SOURCE_DIR}/www/index.ts")
+    set(TS_OUTPUT "${WWW_DIR}/bundle.js")
+    add_custom_command(
+        OUTPUT ${TS_OUTPUT}
+        COMMAND ${ESBUILD_EXECUTABLE} ${TS_SOURCE}
+            --bundle
+            --outfile=${TS_OUTPUT}
+            --target=es2020
+            --format=iife
+        DEPENDS ${TS_SOURCE}
+        COMMENT "Compiling TypeScript with esbuild"
+    )
+
     # Copy index.html to build directory
     add_custom_command(
         OUTPUT ${WWW_DIR}/index.html
@@ -48,8 +75,8 @@ if(ELM_EXECUTABLE)
         COMMENT "Copying index.html"
     )
 
-    # Custom target for Elm build
-    add_custom_target(elm_build ALL DEPENDS ${ELM_OUTPUT} ${WWW_DIR}/index.html)
+    # Custom target for web build (Elm + TypeScript)
+    add_custom_target(web_build ALL DEPENDS ${ELM_OUTPUT} ${TS_OUTPUT} ${WWW_DIR}/index.html)
 
     # Embed www resources as a zip file in C++ header
     set(WWW_ZIP "${CMAKE_BINARY_DIR}/www_resources.zip")
@@ -63,12 +90,12 @@ if(ELM_EXECUTABLE)
             -DOUTPUT_ZIP=${WWW_ZIP}
             -DOUTPUT_HEADER=${WWW_HEADER}
             -P ${CMAKE_SOURCE_DIR}/cmake/embed_zip.cmake
-        DEPENDS ${ELM_OUTPUT} ${WWW_DIR}/index.html ${CMAKE_SOURCE_DIR}/cmake/embed_zip.cmake
+        DEPENDS ${ELM_OUTPUT} ${TS_OUTPUT} ${WWW_DIR}/index.html ${CMAKE_SOURCE_DIR}/cmake/embed_zip.cmake
         COMMENT "Embedding www resources"
     )
 
     add_custom_target(embed_www ALL DEPENDS ${WWW_HEADER})
-    add_dependencies(embed_www elm_build)
+    add_dependencies(embed_www web_build)
 else()
     message(WARNING "Elm compiler not found. Web UI will not be built.")
 endif()
@@ -86,6 +113,7 @@ set(SOURCES
     src/terminal.cpp
     src/input_editor.cpp
     src/http_server.cpp
+    src/websocket_server.cpp
     src/embedded_resources.cpp
     src/third_party/miniz.c
 )
@@ -110,6 +138,7 @@ target_link_libraries(crag PRIVATE
     CURL::libcurl
     ${CMARK_LIBRARIES}
     httplib::httplib
+    ixwebsocket
 )
 
 # Install
@@ -133,6 +162,7 @@ if(BUILD_TESTS)
         src/terminal.cpp
         src/input_editor.cpp
         src/http_server.cpp
+        src/websocket_server.cpp
         src/embedded_resources.cpp
         src/third_party/miniz.c
     )
@@ -154,6 +184,7 @@ if(BUILD_TESTS)
         CURL::libcurl
         ${CMARK_LIBRARIES}
         httplib::httplib
+        ixwebsocket
     )
 
     # Test executable

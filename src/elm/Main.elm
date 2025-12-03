@@ -1,11 +1,35 @@
-port module Main exposing (main)
+module Main exposing (main)
 
 import Browser
-import Html exposing (Html, div, h1, p, text)
-import Html.Attributes exposing (style)
+import Html exposing (Html, button, div, h1, input, p, pre, text, textarea)
+import Html.Attributes exposing (disabled, placeholder, rows, style, value)
+import Html.Events exposing (onClick, onInput)
+import Json.Decode as Decode exposing (Value)
+import Ports
+import Procedure.Program
+import Websocket
 
 
-main : Program () Model Msg
+
+-- Flags
+
+
+type alias Flags =
+    { cragUrl : String
+    }
+
+
+flagsDecoder : Decode.Decoder Flags
+flagsDecoder =
+    Decode.map Flags
+        (Decode.field "cragUrl" Decode.string)
+
+
+
+-- Main
+
+
+main : Program Value Model Msg
 main =
     Browser.element
         { init = init
@@ -15,34 +39,257 @@ main =
         }
 
 
-port consoleLog : String -> Cmd msg
+
+-- Model
+
+
+type ConnectionStatus
+    = Disconnected
+    | Connecting
+    | Connected Websocket.SocketId
 
 
 type alias Model =
-    {}
+    { procedureState : Procedure.Program.Model Msg
+    , cragUrl : String
+    , connectionStatus : ConnectionStatus
+    , userInput : String
+    , messages : List ChatMessage
+    , currentResponse : String
+    , isWaitingForResponse : Bool
+    }
+
+
+type alias ChatMessage =
+    { role : String
+    , content : String
+    }
 
 
 type Msg
-    = NoOp
+    = ProcedureMsg (Procedure.Program.Msg Msg)
+    | WsOpened (Result Websocket.Error Websocket.SocketId)
+    | WsSent (Result Websocket.Error ())
+    | WsClosed (Result Websocket.Error ())
+    | WsMessage Websocket.SocketId String
+    | WsClosedAsync Websocket.SocketId
+    | WsError Websocket.SocketId String
+    | UserInputChanged String
+    | SendMessage
+    | Reconnect
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
-    ( {}
-    , consoleLog "CRAG Elm application initialized"
+
+-- WebSocket API helper
+
+
+wsApi : Websocket.WebsocketApi Msg
+wsApi =
+    Websocket.websocketApi ProcedureMsg Ports.websocketPorts
+
+
+
+-- Init
+
+
+init : Value -> ( Model, Cmd Msg )
+init flagsValue =
+    let
+        flags =
+            Decode.decodeValue flagsDecoder flagsValue
+                |> Result.withDefault { cragUrl = "ws://localhost:8193" }
+
+        model =
+            { procedureState = Procedure.Program.init
+            , cragUrl = flags.cragUrl
+            , connectionStatus = Connecting
+            , userInput = ""
+            , messages = []
+            , currentResponse = ""
+            , isWaitingForResponse = False
+            }
+    in
+    ( model
+    , wsApi.open flags.cragUrl WsOpened
     )
+
+
+
+-- Update
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        NoOp ->
+        ProcedureMsg procMsg ->
+            Procedure.Program.update procMsg model.procedureState
+                |> Tuple.mapFirst (\ps -> { model | procedureState = ps })
+
+        WsOpened result ->
+            case result of
+                Ok socketId ->
+                    ( { model | connectionStatus = Connected socketId }
+                    , Cmd.none
+                    )
+
+                Err error ->
+                    ( { model | connectionStatus = Disconnected }
+                    , Cmd.none
+                    )
+
+        WsSent result ->
+            ( model, Cmd.none )
+
+        WsClosed result ->
+            ( { model | connectionStatus = Disconnected }
+            , Cmd.none
+            )
+
+        WsMessage socketId payload ->
+            handleServerMessage payload model
+
+        WsClosedAsync socketId ->
+            ( { model | connectionStatus = Disconnected }
+            , Cmd.none
+            )
+
+        WsError socketId error ->
+            ( model, Cmd.none )
+
+        UserInputChanged input ->
+            ( { model | userInput = input }, Cmd.none )
+
+        SendMessage ->
+            case model.connectionStatus of
+                Connected socketId ->
+                    if String.trim model.userInput /= "" then
+                        let
+                            queryJson =
+                                "{\"type\":\"query\",\"content\":" ++ encodeString model.userInput ++ "}"
+
+                            newMessage =
+                                { role = "user", content = model.userInput }
+                        in
+                        ( { model
+                            | userInput = ""
+                            , messages = model.messages ++ [ newMessage ]
+                            , isWaitingForResponse = True
+                            , currentResponse = ""
+                          }
+                        , wsApi.send socketId queryJson WsSent
+                        )
+
+                    else
+                        ( model, Cmd.none )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        Reconnect ->
+            ( { model | connectionStatus = Connecting }
+            , wsApi.open model.cragUrl WsOpened
+            )
+
+
+{-| Simple JSON string encoder
+-}
+encodeString : String -> String
+encodeString str =
+    "\""
+        ++ (str
+                |> String.replace "\\" "\\\\"
+                |> String.replace "\"" "\\\""
+                |> String.replace "\n" "\\n"
+                |> String.replace "\r" "\\r"
+                |> String.replace "\t" "\\t"
+           )
+        ++ "\""
+
+
+{-| Handle incoming server messages
+-}
+handleServerMessage : String -> Model -> ( Model, Cmd Msg )
+handleServerMessage payload model =
+    case Decode.decodeString serverMessageDecoder payload of
+        Ok serverMsg ->
+            case serverMsg of
+                DeltaMessage content ->
+                    ( { model | currentResponse = model.currentResponse ++ content }
+                    , Cmd.none
+                    )
+
+                DoneMessage ->
+                    let
+                        assistantMessage =
+                            { role = "assistant", content = model.currentResponse }
+                    in
+                    ( { model
+                        | messages = model.messages ++ [ assistantMessage ]
+                        , currentResponse = ""
+                        , isWaitingForResponse = False
+                      }
+                    , Cmd.none
+                    )
+
+                ErrorMessage errorMsg ->
+                    let
+                        errorChatMessage =
+                            { role = "error", content = errorMsg }
+                    in
+                    ( { model
+                        | messages = model.messages ++ [ errorChatMessage ]
+                        , currentResponse = ""
+                        , isWaitingForResponse = False
+                      }
+                    , Cmd.none
+                    )
+
+        Err _ ->
             ( model, Cmd.none )
 
 
+type ServerMessage
+    = DeltaMessage String
+    | DoneMessage
+    | ErrorMessage String
+
+
+serverMessageDecoder : Decode.Decoder ServerMessage
+serverMessageDecoder =
+    Decode.field "type" Decode.string
+        |> Decode.andThen
+            (\msgType ->
+                case msgType of
+                    "delta" ->
+                        Decode.map DeltaMessage (Decode.field "content" Decode.string)
+
+                    "done" ->
+                        Decode.succeed DoneMessage
+
+                    "error" ->
+                        Decode.map ErrorMessage (Decode.field "message" Decode.string)
+
+                    _ ->
+                        Decode.fail ("Unknown message type: " ++ msgType)
+            )
+
+
+
+-- Subscriptions
+
+
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    Sub.none
+subscriptions model =
+    Sub.batch
+        [ Procedure.Program.subscriptions model.procedureState
+        , wsApi.onMessage WsMessage
+        , wsApi.onClose WsClosedAsync
+        , wsApi.onError WsError
+        ]
+
+
+
+-- View
 
 
 view : Model -> Html Msg
@@ -52,14 +299,199 @@ view model =
         , style "max-width" "800px"
         , style "margin" "0 auto"
         , style "padding" "2rem"
+        , style "height" "100vh"
+        , style "display" "flex"
+        , style "flex-direction" "column"
+        ]
+        [ viewHeader model
+        , viewMessages model
+        , viewInput model
+        ]
+
+
+viewHeader : Model -> Html Msg
+viewHeader model =
+    div
+        [ style "margin-bottom" "1rem"
+        , style "padding-bottom" "1rem"
+        , style "border-bottom" "1px solid #eee"
         ]
         [ h1
             [ style "color" "#333"
+            , style "margin" "0 0 0.5rem 0"
             ]
             [ text "CRAG Web Interface" ]
-        , p
-            [ style "color" "#666"
-            , style "font-size" "1.2rem"
+        , viewConnectionStatus model.connectionStatus
+        ]
+
+
+viewConnectionStatus : ConnectionStatus -> Html Msg
+viewConnectionStatus status =
+    let
+        ( statusText, statusColor ) =
+            case status of
+                Disconnected ->
+                    ( "Disconnected", "#dc3545" )
+
+                Connecting ->
+                    ( "Connecting...", "#ffc107" )
+
+                Connected _ ->
+                    ( "Connected", "#28a745" )
+    in
+    div
+        [ style "display" "flex"
+        , style "align-items" "center"
+        , style "gap" "0.5rem"
+        ]
+        [ div
+            [ style "width" "10px"
+            , style "height" "10px"
+            , style "border-radius" "50%"
+            , style "background-color" statusColor
             ]
-            [ text "Hello from Elm! The web interface is working." ]
+            []
+        , text statusText
+        , case status of
+            Disconnected ->
+                button
+                    [ onClick Reconnect
+                    , style "margin-left" "1rem"
+                    , style "padding" "0.25rem 0.5rem"
+                    , style "cursor" "pointer"
+                    ]
+                    [ text "Reconnect" ]
+
+            _ ->
+                text ""
+        ]
+
+
+viewMessages : Model -> Html Msg
+viewMessages model =
+    let
+        allMessages =
+            if model.currentResponse /= "" then
+                model.messages ++ [ { role = "assistant", content = model.currentResponse } ]
+
+            else
+                model.messages
+    in
+    div
+        [ style "flex" "1"
+        , style "overflow-y" "auto"
+        , style "margin-bottom" "1rem"
+        , style "padding" "1rem"
+        , style "background-color" "#f8f9fa"
+        , style "border-radius" "8px"
+        ]
+        (if List.isEmpty allMessages then
+            [ p [ style "color" "#666" ] [ text "No messages yet. Send a message to start chatting." ] ]
+
+         else
+            List.map viewMessage allMessages
+        )
+
+
+viewMessage : ChatMessage -> Html Msg
+viewMessage message =
+    let
+        ( bgColor, textColor, label ) =
+            case message.role of
+                "user" ->
+                    ( "#007bff", "#fff", "You" )
+
+                "assistant" ->
+                    ( "#fff", "#333", "Assistant" )
+
+                "error" ->
+                    ( "#dc3545", "#fff", "Error" )
+
+                _ ->
+                    ( "#6c757d", "#fff", message.role )
+    in
+    div
+        [ style "margin-bottom" "1rem"
+        , style "padding" "0.75rem 1rem"
+        , style "background-color" bgColor
+        , style "color" textColor
+        , style "border-radius" "8px"
+        , style "box-shadow" "0 1px 3px rgba(0,0,0,0.1)"
+        ]
+        [ div
+            [ style "font-weight" "bold"
+            , style "margin-bottom" "0.25rem"
+            , style "font-size" "0.85rem"
+            ]
+            [ text label ]
+        , pre
+            [ style "margin" "0"
+            , style "white-space" "pre-wrap"
+            , style "word-wrap" "break-word"
+            , style "font-family" "inherit"
+            ]
+            [ text message.content ]
+        ]
+
+
+viewInput : Model -> Html Msg
+viewInput model =
+    let
+        isDisabled =
+            case model.connectionStatus of
+                Connected _ ->
+                    model.isWaitingForResponse
+
+                _ ->
+                    True
+    in
+    div
+        [ style "display" "flex"
+        , style "gap" "0.5rem"
+        ]
+        [ textarea
+            [ value model.userInput
+            , onInput UserInputChanged
+            , placeholder "Type your message..."
+            , rows 3
+            , disabled isDisabled
+            , style "flex" "1"
+            , style "padding" "0.75rem"
+            , style "border" "1px solid #ddd"
+            , style "border-radius" "8px"
+            , style "font-size" "1rem"
+            , style "resize" "none"
+            ]
+            []
+        , button
+            [ onClick SendMessage
+            , disabled (isDisabled || String.trim model.userInput == "")
+            , style "padding" "0.75rem 1.5rem"
+            , style "background-color"
+                (if isDisabled || String.trim model.userInput == "" then
+                    "#ccc"
+
+                 else
+                    "#007bff"
+                )
+            , style "color" "#fff"
+            , style "border" "none"
+            , style "border-radius" "8px"
+            , style "cursor"
+                (if isDisabled then
+                    "not-allowed"
+
+                 else
+                    "pointer"
+                )
+            , style "font-size" "1rem"
+            ]
+            [ text
+                (if model.isWaitingForResponse then
+                    "..."
+
+                 else
+                    "Send"
+                )
+            ]
         ]

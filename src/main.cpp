@@ -9,6 +9,7 @@
 #include "input_editor.hpp"
 #include "terminal.hpp"
 #include "http_server.hpp"
+#include "websocket_server.hpp"
 
 #include <CLI/CLI.hpp>
 #include <iostream>
@@ -280,31 +281,105 @@ int main(int argc, char* argv[]) {
     // Set up signal handler for graceful Ctrl+C.
     std::signal(SIGINT, signal_handler);
 
-    // Server mode - start HTTP server and serve web UI.
+    // Server mode - start HTTP server and WebSocket server for web UI.
     if (server_mode) {
         console.println();
         console.print_header("=== CRAG Web Server ===");
 
-        // Use embedded resources by default, or filesystem if --www-dir specified
-        std::unique_ptr<HttpServer> server;
-        if (www_dir.empty()) {
-            server = std::make_unique<HttpServer>();
-            console.println("Serving from embedded resources");
-        } else {
-            server = std::make_unique<HttpServer>(www_dir);
-            console.println("Serving from directory: " + www_dir);
+        // Check for API key.
+        const char* api_key_env = std::getenv("OPEN_AI_API_KEY");
+        if (!api_key_env || std::string(api_key_env).empty()) {
+            console.print_error("Error: OPEN_AI_API_KEY environment variable not set");
+            return 1;
         }
 
-        server->on_start([&console](const std::string& address, int port) {
+        // Load settings (must have existing settings for server mode).
+        auto existing = load_settings();
+        if (!existing.has_value() || !existing->is_valid()) {
+            console.print_error("Error: No valid settings found. Run 'crag <files>' first to create an index.");
+            return 1;
+        }
+
+        Settings settings = *existing;
+        console.print_colored("Using model: ", ansi::GREEN);
+        console.println(settings.model);
+        console.print_colored("Vector store: ", ansi::GREEN);
+        console.println(settings.vector_store_id);
+
+        // Determine reasoning effort.
+        std::string reasoning_effort = settings.reasoning_effort;
+        if (thinking != '\0') {
+            auto it = THINKING_MAP.find(thinking);
+            if (it != THINKING_MAP.end()) {
+                reasoning_effort = it->second;
+            }
+        }
+        console.print_colored("Reasoning effort: ", ansi::GREEN);
+        console.println(reasoning_effort);
+
+        // Build system prompt.
+        std::string system_prompt =
+            "You are a specialized assistant. "
+            "Use ONLY the provided file knowledge when relevant. "
+            "When using nested lists in markdown, indent nested items with 4 spaces. ";
+
+        if (strict) {
+            system_prompt +=
+                "If the answer is not explicitly contained in the files, "
+                "respond with: 'The provided documents do not contain that information.'";
+        } else {
+            system_prompt +=
+                "If the files do not contain the answer, you may reason normally but clearly "
+                "state that you are extrapolating.";
+        }
+
+        // Create OpenAI client.
+        OpenAIClient client(api_key_env);
+
+        // Use embedded resources by default, or filesystem if --www-dir specified.
+        std::unique_ptr<HttpServer> http_server;
+        if (www_dir.empty()) {
+            http_server = std::make_unique<HttpServer>();
+            console.println("Serving web UI from embedded resources");
+        } else {
+            http_server = std::make_unique<HttpServer>(www_dir);
+            console.println("Serving web UI from directory: " + www_dir);
+        }
+
+        // Create WebSocket server for chat.
+        WebSocketServer ws_server(
+            client,
+            settings.model,
+            settings.vector_store_id,
+            reasoning_effort,
+            system_prompt,
+            LOG_DIR
+        );
+
+        ws_server.on_start([&console](const std::string& address, int port) {
+            console.print_success("WebSocket server listening on ws://" +
+                (address == "0.0.0.0" ? "localhost" : address) + ":" + std::to_string(port) + "/");
+        });
+
+        http_server->on_start([&console](const std::string& address, int port) {
             console.println();
             std::string display_addr = (address == "0.0.0.0") ? "localhost" : address;
-            console.print_success("Server running at http://" + display_addr + ":" + std::to_string(port));
+            console.print_success("HTTP server running at http://" + display_addr + ":" + std::to_string(port));
             console.println("Press Ctrl+C to stop.");
             console.println();
         });
 
-        if (!server->start(server_address, server_port)) {
-            console.print_error("Failed to start server on " + server_address + ":" + std::to_string(server_port));
+        // Start WebSocket server on same port (will handle /ws path).
+        // Note: IXWebSocket server runs on its own port, so we use port+1 for WebSocket.
+        int ws_port = server_port + 1;
+        if (!ws_server.start(server_address, ws_port)) {
+            console.print_error("Failed to start WebSocket server on " + server_address + ":" + std::to_string(ws_port));
+            return 1;
+        }
+
+        // Start HTTP server (blocks until stopped).
+        if (!http_server->start(server_address, server_port)) {
+            console.print_error("Failed to start HTTP server on " + server_address + ":" + std::to_string(server_port));
             return 1;
         }
 
