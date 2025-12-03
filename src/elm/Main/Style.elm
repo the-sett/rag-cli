@@ -167,4 +167,119 @@ style =
         [ Css.backgroundColor (Css.hex "ccc")
         , Css.cursor Css.notAllowed
         ]
+
+    -- Markdown rendering styles
+    , Css.Global.class "md-paragraph"
+        [ Css.marginTop Css.zero
+        , Css.marginBottom (Css.rem 1)
+        , Css.lineHeight (Css.num 1.6)
+        ]
+    , Css.Global.class "md-heading"
+        [ Css.marginTop (Css.rem 1.5)
+        , Css.marginBottom (Css.rem 0.75)
+        , Css.fontWeight Css.bold
+        , Css.lineHeight (Css.num 1.25)
+        ]
+    , Css.Global.class "md-blockquote"
+        [ Css.margin2 (Css.rem 1) Css.zero
+        , Css.paddingLeft (Css.rem 1)
+        , Css.borderLeft3 (Css.px 4) Css.solid (Css.hex "ddd")
+        , Css.color (Css.hex "666")
+        ]
+    , Css.Global.class "md-code-inline"
+        [ Css.fontFamily Css.monospace
+        , Css.backgroundColor (Css.hex "f4f4f4")
+        , Css.padding2 (Css.rem 0.125) (Css.rem 0.25)
+        , Css.borderRadius (Css.px 3)
+        , Css.fontSize (Css.em 0.9)
+        ]
+    , Css.Global.class "md-pre"
+        [ Css.margin2 (Css.rem 1) Css.zero
+        , Css.padding (Css.rem 1)
+        , Css.backgroundColor (Css.hex "282c34")
+        , Css.borderRadius (Css.px 6)
+        , Css.overflow Css.auto
+        ]
+    , Css.Global.class "md-code-block"
+        [ Css.fontFamily Css.monospace
+        , Css.fontSize (Css.rem 0.875)
+        , Css.lineHeight (Css.num 1.5)
+        , Css.color (Css.hex "abb2bf")
+        , Css.margin Css.zero
+        , Css.padding Css.zero
+        , Css.backgroundColor Css.transparent
+        ]
+    , Css.Global.class "md-strong"
+        [ Css.fontWeight Css.bold
+        ]
+    , Css.Global.class "md-emphasis"
+        [ Css.fontStyle Css.italic
+        ]
+    , Css.Global.class "md-strikethrough"
+        [ Css.textDecoration Css.lineThrough
+        ]
+    , Css.Global.class "md-link"
+        [ Css.color (Css.hex "007bff")
+        , Css.textDecoration Css.none
+        , Css.hover
+            [ Css.textDecoration Css.underline
+            ]
+        ]
+    , Css.Global.class "md-image"
+        [ Css.maxWidth (Css.pct 100)
+        , Css.height Css.auto
+        ]
+    , Css.Global.class "md-ul"
+        [ Css.margin2 (Css.rem 1) Css.zero
+        , Css.paddingLeft (Css.rem 2)
+        ]
+    , Css.Global.class "md-ol"
+        [ Css.margin2 (Css.rem 1) Css.zero
+        , Css.paddingLeft (Css.rem 2)
+        ]
+    , Css.Global.class "md-li"
+        [ Css.marginBottom (Css.rem 0.25)
+        ]
+    , Css.Global.class "md-hr"
+        [ Css.margin2 (Css.rem 2) Css.zero
+        , Css.border Css.zero
+        , Css.borderTop3 (Css.px 1) Css.solid (Css.hex "ddd")
+        ]
+    , Css.Global.class "md-table"
+        [ Css.width (Css.pct 100)
+        , Css.borderCollapse Css.collapse
+        , Css.margin2 (Css.rem 1) Css.zero
+        ]
+    , Css.Global.class "md-thead"
+        [ Css.backgroundColor (Css.hex "f5f5f5")
+        ]
+    , Css.Global.class "md-tbody"
+        []
+    , Css.Global.class "md-tr"
+        [ Css.borderBottom3 (Css.px 1) Css.solid (Css.hex "ddd")
+        ]
+    , Css.Global.class "md-th"
+        [ Css.padding2 (Css.rem 0.5) (Css.rem 0.75)
+        , Css.fontWeight Css.bold
+        , Css.textAlign Css.left
+        ]
+    , Css.Global.class "md-td"
+        [ Css.padding2 (Css.rem 0.5) (Css.rem 0.75)
+        ]
+    , Css.Global.class "md-task-checkbox"
+        [ Css.marginRight (Css.rem 0.5)
+        ]
+    , Css.Global.class "md-pending"
+        [ Css.fontFamily Css.monospace
+        , Css.margin Css.zero
+        , Css.padding Css.zero
+        , Css.whiteSpace Css.preWrap
+        , Css.color (Css.hex "888")
+        ]
+    , Css.Global.class "md-error"
+        [ Css.fontFamily Css.monospace
+        , Css.margin Css.zero
+        , Css.padding Css.zero
+        , Css.color (Css.hex "dc3545")
+        ]
     ]

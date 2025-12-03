@@ -8,6 +8,7 @@ import Html.Styled.Attributes as HA
 import Html.Styled.Events as HE
 import Json.Decode as Decode exposing (Value)
 import Main.Style
+import Markdown.Render as MdRender exposing (ChatMarkBlock, StreamState)
 import Ports
 import Procedure.Program
 import Websocket
@@ -58,14 +59,14 @@ type alias Model =
     , connectionStatus : ConnectionStatus
     , userInput : String
     , messages : List ChatMessage
-    , currentResponse : String
+    , streamState : StreamState
     , isWaitingForResponse : Bool
     }
 
 
 type alias ChatMessage =
     { role : String
-    , content : String
+    , blocks : List ChatMarkBlock
     }
 
 
@@ -108,7 +109,7 @@ init flagsValue =
             , connectionStatus = Connecting
             , userInput = ""
             , messages = []
-            , currentResponse = ""
+            , streamState = MdRender.initStreamState
             , isWaitingForResponse = False
             }
     in
@@ -171,13 +172,13 @@ update msg model =
                                 "{\"type\":\"query\",\"content\":" ++ encodeString model.userInput ++ "}"
 
                             newMessage =
-                                { role = "user", content = model.userInput }
+                                { role = "user", blocks = [ MdRender.PendingBlock model.userInput ] }
                         in
                         ( { model
                             | userInput = ""
                             , messages = model.messages ++ [ newMessage ]
                             , isWaitingForResponse = True
-                            , currentResponse = ""
+                            , streamState = MdRender.initStreamState
                           }
                         , wsApi.send socketId queryJson WsSent
                         )
@@ -217,18 +218,21 @@ handleServerMessage payload model =
         Ok serverMsg ->
             case serverMsg of
                 DeltaMessage content ->
-                    ( { model | currentResponse = model.currentResponse ++ content }
+                    ( { model | streamState = MdRender.feedDelta content model.streamState }
                     , Cmd.none
                     )
 
                 DoneMessage ->
                     let
+                        finalBlocks =
+                            MdRender.finishStream model.streamState
+
                         assistantMessage =
-                            { role = "assistant", content = model.currentResponse }
+                            { role = "assistant", blocks = finalBlocks }
                     in
                     ( { model
                         | messages = model.messages ++ [ assistantMessage ]
-                        , currentResponse = ""
+                        , streamState = MdRender.initStreamState
                         , isWaitingForResponse = False
                       }
                     , Cmd.none
@@ -237,11 +241,11 @@ handleServerMessage payload model =
                 ErrorMessage errorMsg ->
                     let
                         errorChatMessage =
-                            { role = "error", content = errorMsg }
+                            { role = "error", blocks = [ MdRender.ErrorBlock "" errorMsg ] }
                     in
                     ( { model
                         | messages = model.messages ++ [ errorChatMessage ]
-                        , currentResponse = ""
+                        , streamState = MdRender.initStreamState
                         , isWaitingForResponse = False
                       }
                     , Cmd.none
@@ -360,24 +364,51 @@ viewConnectionStatus status =
 viewMessages : Model -> Html Msg
 viewMessages model =
     let
-        allMessages =
-            if model.currentResponse /= "" then
-                model.messages ++ [ { role = "assistant", content = model.currentResponse } ]
+        -- Get pending text from stream state for in-progress rendering
+        pendingText =
+            MdRender.getPending model.streamState
+
+        -- Add streaming message if there's activity
+        streamingMessage =
+            if model.isWaitingForResponse then
+                [ viewStreamingMessage model.streamState pendingText ]
 
             else
-                model.messages
+                []
+
+        allContent =
+            List.map viewMessage model.messages ++ streamingMessage
     in
     HS.div
         [ HA.class "messages-container" ]
-        (if List.isEmpty allMessages then
+        (if List.isEmpty model.messages && not model.isWaitingForResponse then
             [ HS.p
                 [ HA.class "messages-empty" ]
                 [ HS.text "No messages yet. Send a message to start chatting." ]
             ]
 
          else
-            List.map viewMessage allMessages
+            allContent
         )
+
+
+viewStreamingMessage : StreamState -> String -> Html Msg
+viewStreamingMessage streamState pendingText =
+    let
+        completedBlocks =
+            streamState.completedBlocks
+    in
+    HS.div
+        [ HA.class "message"
+        , HA.class "message-assistant"
+        ]
+        [ HS.div
+            [ HA.class "message-label" ]
+            [ HS.text "Assistant" ]
+        , HS.div
+            [ HA.class "message-content" ]
+            (MdRender.renderBlocks completedBlocks pendingText)
+        ]
 
 
 viewMessage : ChatMessage -> Html Msg
@@ -404,9 +435,9 @@ viewMessage message =
         [ HS.div
             [ HA.class "message-label" ]
             [ HS.text label ]
-        , HS.pre
+        , HS.div
             [ HA.class "message-content" ]
-            [ HS.text message.content ]
+            (MdRender.renderBlocks message.blocks "")
         ]
 
 
