@@ -1,10 +1,13 @@
 module Main exposing (main)
 
 import Browser
-import Html exposing (Html, button, div, h1, input, p, pre, text, textarea)
-import Html.Attributes exposing (disabled, placeholder, rows, style, value)
-import Html.Events exposing (onClick, onInput)
+import Css.Global
+import Html
+import Html.Styled as HS exposing (Html)
+import Html.Styled.Attributes as HA
+import Html.Styled.Events as HE
 import Json.Decode as Decode exposing (Value)
+import Main.Style
 import Ports
 import Procedure.Program
 import Websocket
@@ -132,28 +135,28 @@ update msg model =
                     , Cmd.none
                     )
 
-                Err error ->
+                Err _ ->
                     ( { model | connectionStatus = Disconnected }
                     , Cmd.none
                     )
 
-        WsSent result ->
+        WsSent _ ->
             ( model, Cmd.none )
 
-        WsClosed result ->
+        WsClosed _ ->
             ( { model | connectionStatus = Disconnected }
             , Cmd.none
             )
 
-        WsMessage socketId payload ->
+        WsMessage _ payload ->
             handleServerMessage payload model
 
-        WsClosedAsync socketId ->
+        WsClosedAsync _ ->
             ( { model | connectionStatus = Disconnected }
             , Cmd.none
             )
 
-        WsError socketId error ->
+        WsError _ _ ->
             ( model, Cmd.none )
 
         UserInputChanged input ->
@@ -292,18 +295,17 @@ subscriptions model =
 -- View
 
 
-view : Model -> Html Msg
+view : Model -> Html.Html Msg
 view model =
-    div
-        [ style "font-family" "system-ui, -apple-system, sans-serif"
-        , style "max-width" "800px"
-        , style "margin" "0 auto"
-        , style "padding" "2rem"
-        , style "height" "100vh"
-        , style "display" "flex"
-        , style "flex-direction" "column"
-        ]
-        [ viewHeader model
+    viewStyled model |> HS.toUnstyled
+
+
+viewStyled : Model -> Html Msg
+viewStyled model =
+    HS.div
+        [ HA.class "app-container" ]
+        [ Main.Style.style |> Css.Global.global
+        , viewHeader model
         , viewMessages model
         , viewInput model
         ]
@@ -311,16 +313,11 @@ view model =
 
 viewHeader : Model -> Html Msg
 viewHeader model =
-    div
-        [ style "margin-bottom" "1rem"
-        , style "padding-bottom" "1rem"
-        , style "border-bottom" "1px solid #eee"
-        ]
-        [ h1
-            [ style "color" "#333"
-            , style "margin" "0 0 0.5rem 0"
-            ]
-            [ text "CRAG Web Interface" ]
+    HS.div
+        [ HA.class "header" ]
+        [ HS.h1
+            [ HA.class "header-title" ]
+            [ HS.text "CRAG Web Interface" ]
         , viewConnectionStatus model.connectionStatus
         ]
 
@@ -328,42 +325,35 @@ viewHeader model =
 viewConnectionStatus : ConnectionStatus -> Html Msg
 viewConnectionStatus status =
     let
-        ( statusText, statusColor ) =
+        ( statusText, statusClass ) =
             case status of
                 Disconnected ->
-                    ( "Disconnected", "#dc3545" )
+                    ( "Disconnected", "status-disconnected" )
 
                 Connecting ->
-                    ( "Connecting...", "#ffc107" )
+                    ( "Connecting...", "status-connecting" )
 
                 Connected _ ->
-                    ( "Connected", "#28a745" )
+                    ( "Connected", "status-connected" )
     in
-    div
-        [ style "display" "flex"
-        , style "align-items" "center"
-        , style "gap" "0.5rem"
-        ]
-        [ div
-            [ style "width" "10px"
-            , style "height" "10px"
-            , style "border-radius" "50%"
-            , style "background-color" statusColor
+    HS.div
+        [ HA.class "connection-status" ]
+        [ HS.div
+            [ HA.class "status-indicator"
+            , HA.class statusClass
             ]
             []
-        , text statusText
+        , HS.text statusText
         , case status of
             Disconnected ->
-                button
-                    [ onClick Reconnect
-                    , style "margin-left" "1rem"
-                    , style "padding" "0.25rem 0.5rem"
-                    , style "cursor" "pointer"
+                HS.button
+                    [ HA.class "reconnect-button"
+                    , HE.onClick Reconnect
                     ]
-                    [ text "Reconnect" ]
+                    [ HS.text "Reconnect" ]
 
             _ ->
-                text ""
+                HS.text ""
         ]
 
 
@@ -377,16 +367,13 @@ viewMessages model =
             else
                 model.messages
     in
-    div
-        [ style "flex" "1"
-        , style "overflow-y" "auto"
-        , style "margin-bottom" "1rem"
-        , style "padding" "1rem"
-        , style "background-color" "#f8f9fa"
-        , style "border-radius" "8px"
-        ]
+    HS.div
+        [ HA.class "messages-container" ]
         (if List.isEmpty allMessages then
-            [ p [ style "color" "#666" ] [ text "No messages yet. Send a message to start chatting." ] ]
+            [ HS.p
+                [ HA.class "messages-empty" ]
+                [ HS.text "No messages yet. Send a message to start chatting." ]
+            ]
 
          else
             List.map viewMessage allMessages
@@ -396,41 +383,30 @@ viewMessages model =
 viewMessage : ChatMessage -> Html Msg
 viewMessage message =
     let
-        ( bgColor, textColor, label ) =
+        ( roleClass, label ) =
             case message.role of
                 "user" ->
-                    ( "#007bff", "#fff", "You" )
+                    ( "message-user", "You" )
 
                 "assistant" ->
-                    ( "#fff", "#333", "Assistant" )
+                    ( "message-assistant", "Assistant" )
 
                 "error" ->
-                    ( "#dc3545", "#fff", "Error" )
+                    ( "message-error", "Error" )
 
                 _ ->
-                    ( "#6c757d", "#fff", message.role )
+                    ( "message-assistant", message.role )
     in
-    div
-        [ style "margin-bottom" "1rem"
-        , style "padding" "0.75rem 1rem"
-        , style "background-color" bgColor
-        , style "color" textColor
-        , style "border-radius" "8px"
-        , style "box-shadow" "0 1px 3px rgba(0,0,0,0.1)"
+    HS.div
+        [ HA.class "message"
+        , HA.class roleClass
         ]
-        [ div
-            [ style "font-weight" "bold"
-            , style "margin-bottom" "0.25rem"
-            , style "font-size" "0.85rem"
-            ]
-            [ text label ]
-        , pre
-            [ style "margin" "0"
-            , style "white-space" "pre-wrap"
-            , style "word-wrap" "break-word"
-            , style "font-family" "inherit"
-            ]
-            [ text message.content ]
+        [ HS.div
+            [ HA.class "message-label" ]
+            [ HS.text label ]
+        , HS.pre
+            [ HA.class "message-content" ]
+            [ HS.text message.content ]
         ]
 
 
@@ -444,49 +420,32 @@ viewInput model =
 
                 _ ->
                     True
+
+        buttonClass =
+            if isDisabled || String.trim model.userInput == "" then
+                "send-button-disabled"
+
+            else
+                "send-button-enabled"
     in
-    div
-        [ style "display" "flex"
-        , style "gap" "0.5rem"
-        ]
-        [ textarea
-            [ value model.userInput
-            , onInput UserInputChanged
-            , placeholder "Type your message..."
-            , rows 3
-            , disabled isDisabled
-            , style "flex" "1"
-            , style "padding" "0.75rem"
-            , style "border" "1px solid #ddd"
-            , style "border-radius" "8px"
-            , style "font-size" "1rem"
-            , style "resize" "none"
+    HS.div
+        [ HA.class "input-container" ]
+        [ HS.textarea
+            [ HA.class "input-textarea"
+            , HA.value model.userInput
+            , HE.onInput UserInputChanged
+            , HA.placeholder "Type your message..."
+            , HA.rows 3
+            , HA.disabled isDisabled
             ]
             []
-        , button
-            [ onClick SendMessage
-            , disabled (isDisabled || String.trim model.userInput == "")
-            , style "padding" "0.75rem 1.5rem"
-            , style "background-color"
-                (if isDisabled || String.trim model.userInput == "" then
-                    "#ccc"
-
-                 else
-                    "#007bff"
-                )
-            , style "color" "#fff"
-            , style "border" "none"
-            , style "border-radius" "8px"
-            , style "cursor"
-                (if isDisabled then
-                    "not-allowed"
-
-                 else
-                    "pointer"
-                )
-            , style "font-size" "1rem"
+        , HS.button
+            [ HA.class "send-button"
+            , HA.class buttonClass
+            , HE.onClick SendMessage
+            , HA.disabled (isDisabled || String.trim model.userInput == "")
             ]
-            [ text
+            [ HS.text
                 (if model.isWaitingForResponse then
                     "..."
 
