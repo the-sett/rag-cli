@@ -1,12 +1,12 @@
-module Markdown.Render exposing
+module Markdown.ChatMarkBlock exposing
     ( ChatMarkBlock(..)
     , HeadingInfo
     , StreamState
-    , initStreamState
+    , extractHeadings
     , feedDelta
     , finishStream
     , getPending
-    , extractHeadings
+    , initStreamState
     , renderBlocks
     , renderBlocksWithIds
     )
@@ -20,12 +20,12 @@ to provide a complete solution for rendering streaming markdown.
 
 import Html.Styled as HS exposing (Html)
 import Html.Styled.Attributes as HA
-import Markdown.Assembler as Assembler exposing (AssembledBlock(..), ListType(..))
 import Markdown.Block
-import Markdown.BlockSplitter as Splitter
 import Markdown.Parser
+import Markdown.RawBlock as RawBlock exposing (ListType(..), RawBlock(..))
 import Markdown.Renderer
 import Markdown.StyledRenderer
+import Markdown.TextChunks as TextChunks
 
 
 {-| A chat message block that can be complete, pending, or have an error.
@@ -47,7 +47,7 @@ type alias HeadingInfo =
 {-| The state for streaming markdown.
 -}
 type alias StreamState =
-    { splitterState : Splitter.State
+    { splitterState : TextChunks.TextChunks
     , completedBlocks : List ChatMarkBlock
     }
 
@@ -56,7 +56,7 @@ type alias StreamState =
 -}
 initStreamState : StreamState
 initStreamState =
-    { splitterState = Splitter.init
+    { splitterState = TextChunks.init
     , completedBlocks = []
     }
 
@@ -67,14 +67,14 @@ feedDelta : String -> StreamState -> StreamState
 feedDelta delta state =
     let
         newSplitterState =
-            Splitter.feed delta state.splitterState
+            TextChunks.feed delta state.splitterState
 
         -- Parse any newly completed blocks
         previousCompletedCount =
-            List.length (Splitter.getCompleted state.splitterState)
+            List.length (TextChunks.getCompleted state.splitterState)
 
         allCompleted =
-            Splitter.getCompleted newSplitterState
+            TextChunks.getCompleted newSplitterState
 
         newlyCompleted =
             List.drop previousCompletedCount allCompleted
@@ -94,14 +94,14 @@ finishStream : StreamState -> List ChatMarkBlock
 finishStream state =
     let
         finalSplitterState =
-            Splitter.finish state.splitterState
+            TextChunks.finish state.splitterState
 
         -- Get any remaining completed blocks
         previousCompletedCount =
-            List.length (Splitter.getCompleted state.splitterState)
+            List.length (TextChunks.getCompleted state.splitterState)
 
         allCompleted =
-            Splitter.getCompleted finalSplitterState
+            TextChunks.getCompleted finalSplitterState
 
         newlyCompleted =
             List.drop previousCompletedCount allCompleted
@@ -116,7 +116,7 @@ finishStream state =
 -}
 getPending : StreamState -> String
 getPending state =
-    Splitter.getPending state.splitterState
+    TextChunks.getPending state.splitterState
 
 
 {-| Parse a raw block string into ChatMarkBlocks.

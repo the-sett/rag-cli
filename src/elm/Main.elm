@@ -9,7 +9,7 @@ import Html.Styled.Attributes as HA
 import Html.Styled.Events as HE
 import Json.Decode as Decode exposing (Value)
 import Main.Style
-import Markdown.Render as MdRender exposing (ChatMarkBlock, StreamState)
+import Markdown.ChatMarkBlock as ChatMarkBlock exposing (ChatMarkBlock, StreamState)
 import Ports
 import Procedure.Program
 import Task
@@ -124,7 +124,7 @@ init flagsValue =
             , connectionStatus = Connecting
             , userInput = ""
             , messages = []
-            , streamState = MdRender.initStreamState
+            , streamState = ChatMarkBlock.initStreamState
             , isWaitingForResponse = False
             , tocEntries = []
             }
@@ -188,13 +188,13 @@ update msg model =
                                 "{\"type\":\"query\",\"content\":" ++ encodeString model.userInput ++ "}"
 
                             newMessage =
-                                { role = "user", blocks = [ MdRender.PendingBlock model.userInput ] }
+                                { role = "user", blocks = [ ChatMarkBlock.PendingBlock model.userInput ] }
                         in
                         ( { model
                             | userInput = ""
                             , messages = model.messages ++ [ newMessage ]
                             , isWaitingForResponse = True
-                            , streamState = MdRender.initStreamState
+                            , streamState = ChatMarkBlock.initStreamState
                           }
                         , wsApi.send socketId queryJson WsSent
                         )
@@ -237,6 +237,7 @@ scrollToEntry targetId =
                                         - viewport.viewport.y
                                         + viewport.viewport.y
                                         - 20
+
                                 -- 20px padding from top
                             in
                             Dom.setViewportOf "messages-container" 0 (max 0 targetY)
@@ -254,7 +255,7 @@ encodeString str =
                 |> String.replace "\\" "\\\\"
                 |> String.replace "\"" "\\\""
                 |> String.replace "\n" "\\n"
-                |> String.replace "\r" "\\r"
+                |> String.replace "\u{000D}" "\\r"
                 |> String.replace "\t" "\\t"
            )
         ++ "\""
@@ -268,14 +269,14 @@ handleServerMessage payload model =
         Ok serverMsg ->
             case serverMsg of
                 DeltaMessage content ->
-                    ( { model | streamState = MdRender.feedDelta content model.streamState }
+                    ( { model | streamState = ChatMarkBlock.feedDelta content model.streamState }
                     , Cmd.none
                     )
 
                 DoneMessage ->
                     let
                         finalBlocks =
-                            MdRender.finishStream model.streamState
+                            ChatMarkBlock.finishStream model.streamState
 
                         assistantMessage =
                             { role = "assistant", blocks = finalBlocks }
@@ -288,7 +289,7 @@ handleServerMessage payload model =
                     in
                     ( { model
                         | messages = newMessages
-                        , streamState = MdRender.initStreamState
+                        , streamState = ChatMarkBlock.initStreamState
                         , isWaitingForResponse = False
                         , tocEntries = newTocEntries
                       }
@@ -298,11 +299,11 @@ handleServerMessage payload model =
                 ErrorMessage errorMsg ->
                     let
                         errorChatMessage =
-                            { role = "error", blocks = [ MdRender.ErrorBlock "" errorMsg ] }
+                            { role = "error", blocks = [ ChatMarkBlock.ErrorBlock "" errorMsg ] }
                     in
                     ( { model
                         | messages = model.messages ++ [ errorChatMessage ]
-                        , streamState = MdRender.initStreamState
+                        , streamState = ChatMarkBlock.initStreamState
                         , isWaitingForResponse = False
                       }
                     , Cmd.none
@@ -349,7 +350,7 @@ generateTocEntries messages =
                 if message.role == "assistant" then
                     let
                         headings =
-                            MdRender.extractHeadings message.blocks
+                            ChatMarkBlock.extractHeadings message.blocks
 
                         idPrefix =
                             "msg-" ++ String.fromInt msgIdx
@@ -499,7 +500,7 @@ viewMessages model =
     let
         -- Get pending text from stream state for in-progress rendering
         pendingText =
-            MdRender.getPending model.streamState
+            ChatMarkBlock.getPending model.streamState
 
         -- Add streaming message if there's activity
         streamingMessage =
@@ -545,7 +546,7 @@ viewStreamingMessage msgIndex streamState pendingText =
             [ HS.text "Assistant" ]
         , HS.div
             [ HA.class "message-content" ]
-            (MdRender.renderBlocksWithIds idPrefix completedBlocks pendingText)
+            (ChatMarkBlock.renderBlocksWithIds idPrefix completedBlocks pendingText)
         ]
 
 
@@ -574,10 +575,10 @@ viewMessageWithIndex msgIndex message =
         -- Use renderBlocksWithIds for assistant messages to enable TOC navigation
         renderedContent =
             if message.role == "assistant" then
-                MdRender.renderBlocksWithIds idPrefix message.blocks ""
+                ChatMarkBlock.renderBlocksWithIds idPrefix message.blocks ""
 
             else
-                MdRender.renderBlocks message.blocks ""
+                ChatMarkBlock.renderBlocks message.blocks ""
     in
     HS.div
         [ HA.class "message"

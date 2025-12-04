@@ -1,5 +1,5 @@
-module Markdown.Assembler exposing
-    ( AssembledBlock(..)
+module Markdown.RawBlock exposing
+    ( RawBlock(..)
     , ListType(..)
     , assemble
     )
@@ -16,7 +16,7 @@ import Regex exposing (Regex)
 
 {-| A block after assembly, ready for parsing and rendering.
 -}
-type AssembledBlock
+type RawBlock
     = SingleBlock String
     | AssembledList ListType (List String)
     | AssembledBlockquote (List String)
@@ -31,12 +31,12 @@ type ListType
 
 {-| Assemble a list of raw block strings into grouped blocks.
 -}
-assemble : List String -> List AssembledBlock
+assemble : List String -> List RawBlock
 assemble blocks =
     assembleHelper blocks []
 
 
-assembleHelper : List String -> List AssembledBlock -> List AssembledBlock
+assembleHelper : List String -> List RawBlock -> List RawBlock
 assembleHelper remaining accumulated =
     case remaining of
         [] ->

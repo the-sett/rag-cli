@@ -1,10 +1,10 @@
-module Markdown.BlockSplitter exposing
-    ( State
-    , init
+module Markdown.TextChunks exposing
+    ( TextChunks
     , feed
     , finish
     , getCompleted
     , getPending
+    , init
     )
 
 {-| State machine for splitting streaming markdown text into blocks.
@@ -26,7 +26,7 @@ import Regex exposing (Regex)
 
 {-| The state of the block splitter.
 -}
-type alias State =
+type alias TextChunks =
     { completed : List String -- Completed raw block strings (in order)
     , pending : String -- Current accumulating text
     , lineBuffer : String -- Partial line not yet terminated with \n
@@ -53,7 +53,7 @@ type alias FenceInfo =
 
 {-| Initialize a new splitter state.
 -}
-init : State
+init : TextChunks
 init =
     { completed = []
     , pending = ""
@@ -64,7 +64,7 @@ init =
 
 {-| Feed a chunk of text into the splitter.
 -}
-feed : String -> State -> State
+feed : String -> TextChunks -> TextChunks
 feed delta state =
     let
         -- Combine line buffer with new delta
@@ -82,7 +82,7 @@ feed delta state =
 {-| Finish processing and return final state.
 Call this when the stream is done.
 -}
-finish : State -> State
+finish : TextChunks -> TextChunks
 finish state =
     let
         -- Process any remaining line buffer
@@ -102,14 +102,14 @@ finish state =
 
 {-| Get the list of completed block strings.
 -}
-getCompleted : State -> List String
+getCompleted : TextChunks -> List String
 getCompleted state =
     state.completed
 
 
 {-| Get the current pending block string.
 -}
-getPending : State -> String
+getPending : TextChunks -> String
 getPending state =
     state.pending
 
@@ -119,7 +119,7 @@ getPending state =
 
 
 {-| Split text into complete lines and a remainder.
-A complete line ends with \n.
+A complete line ends with \\n.
 -}
 splitLines : String -> ( List String, String )
 splitLines text =
@@ -140,9 +140,9 @@ splitLines text =
             ( List.reverse rest, last )
 
 
-{-| Process a single complete line (without the trailing \n).
+{-| Process a single complete line (without the trailing \\n).
 -}
-processLine : String -> State -> State
+processLine : String -> TextChunks -> TextChunks
 processLine line state =
     case state.mode of
         InCodeFence fenceInfo ->
@@ -157,7 +157,7 @@ processLine line state =
 
 {-| Process a line while in code fence mode.
 -}
-processLineInCodeFence : String -> FenceInfo -> State -> State
+processLineInCodeFence : String -> FenceInfo -> TextChunks -> TextChunks
 processLineInCodeFence line fenceInfo state =
     if isClosingFence line fenceInfo then
         -- Close the code fence - include the closing fence in the block
@@ -219,7 +219,7 @@ countLeadingChars char str =
 
 {-| Process a line while in table mode.
 -}
-processLineInTable : String -> State -> State
+processLineInTable : String -> TextChunks -> TextChunks
 processLineInTable line state =
     if isTableRow line then
         -- Continue the table
@@ -255,12 +255,12 @@ isTableSeparator line =
     in
     String.startsWith "|" trimmed
         && String.contains "-" trimmed
-        && (String.all (\c -> c == '|' || c == '-' || c == ':' || c == ' ') trimmed)
+        && String.all (\c -> c == '|' || c == '-' || c == ':' || c == ' ') trimmed
 
 
 {-| Process a line in normal mode.
 -}
-processLineNormal : String -> State -> State
+processLineNormal : String -> TextChunks -> TextChunks
 processLineNormal line state =
     let
         trimmed =
@@ -338,7 +338,7 @@ processLineNormal line state =
 
 {-| Complete the current pending block if non-empty.
 -}
-completePendingBlock : State -> State
+completePendingBlock : TextChunks -> TextChunks
 completePendingBlock state =
     let
         trimmedPending =
