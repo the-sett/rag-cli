@@ -434,10 +434,6 @@ mainLayoutStyles =
         , Css.flexDirection Css.column
         , Css.minWidth Css.zero
         , Css.overflow Css.hidden
-        , Css.padding space2
-        , mediaMedium
-            [ Css.padding space3
-            ]
         ]
     ]
 
@@ -485,16 +481,18 @@ connectionStatusStyles =
         [ Css.displayFlex
         , Css.alignItems Css.center
         , Css.property "gap" "0.5rem"
-        , Css.fontSize (Css.rem 0.875)
+        , Css.fontSize (Css.rem 0.75)
         , Css.color colorTextSecondary
-        , mediaMedium
-            [ Css.fontSize (Css.rem 1)
-            ]
+        , Css.marginBottom space2
+        , Css.paddingBottom space2
+        , Css.borderBottom3 (Css.px 1) Css.solid colorBorderLight
+        , Css.flexWrap Css.wrap
         ]
     , Css.Global.class "status-indicator"
-        [ Css.width (Css.px 10)
-        , Css.height (Css.px 10)
+        [ Css.width (Css.px 8)
+        , Css.height (Css.px 8)
         , Css.borderRadius (Css.pct 50)
+        , Css.flexShrink Css.zero
         ]
     , Css.Global.class "status-disconnected"
         [ Css.backgroundColor colorNegative
@@ -506,15 +504,15 @@ connectionStatusStyles =
         [ Css.backgroundColor colorPositive
         ]
     , Css.Global.class "reconnect-button"
-        [ Css.marginLeft space2
-        , Css.padding2 space1 space2
+        [ Css.marginLeft Css.auto
+        , Css.padding2 (Css.rem 0.25) space1
         , Css.cursor Css.pointer
         , Css.border3 (Css.px 1) Css.solid colorBorder
         , Css.borderRadius (Css.px 4)
         , Css.backgroundColor colorBackground
         , Css.color colorText
         , Css.fontFamilies fontStack
-        , Css.fontSize (Css.rem 0.875)
+        , Css.fontSize (Css.rem 0.75)
         , Css.property "transition" "color 0.2s, background-color 0.2s, border-color 0.2s"
         , Css.hover
             [ Css.backgroundColor colorBackgroundSecondary
@@ -536,16 +534,24 @@ messagesStyles =
         [ Css.flex (Css.int 1)
         , Css.overflowY Css.auto
         , Css.overflowX Css.hidden
-        , Css.marginBottom space2
-        , Css.padding space2
         , Css.backgroundColor colorBackground
-        , Css.borderRadius (Css.px 8)
-        , Css.border3 (Css.px 1) Css.solid colorBorderLight
         , Css.minHeight Css.zero -- Important for flex scroll
+        ]
+    , Css.Global.class "messages-content"
+        [ Css.displayFlex
+        , Css.flexDirection Css.column
+        , Css.padding space2
         , mediaMedium
             [ Css.padding space3
-            , Css.marginBottom space3
             ]
+        ]
+
+    -- Dynamic spacer: always provides 80vh of space after content.
+    -- This ensures any message can be scrolled to the top of the viewport.
+    -- As streaming content grows, user scrolls down through the spacer.
+    , Css.Global.class "messages-spacer"
+        [ Css.height (Css.vh 80)
+        , Css.flexShrink Css.zero
         ]
     , Css.Global.class "messages-empty"
         [ Css.color colorTextSecondary
@@ -570,35 +576,22 @@ messageStyles =
     [ Css.Global.class "message"
         [ Css.marginBottom space2
         , Css.padding space2
-        , Css.borderRadius (Css.px 8)
-        , Css.boxShadow4 (Css.px 1) (Css.px 1) (Css.px 4) (Css.rgba 0 0 0 0.15)
+        , Css.backgroundColor colorBackground
+        , Css.color colorText
         , mediaMedium
             [ Css.marginBottom space3
             , Css.padding space3
             ]
         ]
     , Css.Global.class "message-user"
-        [ Css.backgroundColor colorBrand
-        , Css.color colorBackground
+        [ Css.borderTop3 (Css.px 5) Css.solid colorBrand
+        , Css.borderBottom3 (Css.px 5) Css.solid colorBrand
         ]
     , Css.Global.class "message-assistant"
-        [ Css.backgroundColor colorBackground
-        , Css.color colorText
-        , Css.border3 (Css.px 1) Css.solid colorBorderLight
-        ]
+        []
     , Css.Global.class "message-error"
         [ Css.backgroundColor colorNegative
         , Css.color colorBackground
-        ]
-    , Css.Global.class "message-label"
-        [ Css.fontWeight (Css.int 700)
-        , Css.marginBottom space1
-        , Css.fontSize (Css.rem 0.875)
-        , Css.textTransform Css.uppercase
-        , Css.letterSpacing (Css.em 0.05)
-        , mediaMedium
-            [ Css.fontSize (Css.rem 1)
-            ]
         ]
     , Css.Global.class "message-content"
         [ Css.margin Css.zero
@@ -624,8 +617,12 @@ inputStyles =
     [ Css.Global.class "input-container"
         [ Css.displayFlex
         , Css.property "gap" "0.5rem"
+        , Css.padding space2
+        , Css.backgroundColor colorBackgroundSecondary
+        , Css.borderTop3 (Css.px 1) Css.solid colorBorderLight
         , mediaMedium
             [ Css.property "gap" "1rem"
+            , Css.padding space3
             ]
         ]
     , Css.Global.class "input-textarea"

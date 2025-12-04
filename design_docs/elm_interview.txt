@@ -1,0 +1,81 @@
+My Elm Philosophy:
+
+    TEA is Module Update View. The is 1 update cycle per javascript event loop iteration. There are some situations where update cycles can be triggered synchronously described in the docs for elm/virtual-dom; its some browser optimisation stuff.
+
+    This is single threaded event driven programming and Elm is immutable. This means that it is safe to share state over your entire application. This in turn means that building applications in Elm is best done as 'flat' as possible. The reason why? Otherwise state will be encapsulated to a module and you will get into the anti pattern of having modules send events to other modules to update or query state. Share state between modules where needed as single threaded and immutable cancels out the difficulties this would pose in multi-threaded object oriented languages.
+    
+    Use extensible records to describe the sub-parts of the model that modules need to work with and keep this view clean for each part of your application.
+
+    Name modules after the principal type they expose. When slicing a model into extensible records, give the record alias for each sub-module the same name as the module, and build the module around that type.
+
+    Application grow hair and typically end up with lots of fields in their top-level module. Things like URLs for backends they work with, config settings, user settings. And application models can get big as the complexity of an application grows. This is normal and totally fine in application code. There is a temptation to tidy this that should be resisted as you want to avoid encapsulating data into one module and falling into a message passing regime with it.
+
+    When building re-usable components, which can be published even as packages, fields typically do get encapsulated. Don't rush to get this, let re-usable code surface in its own time. But it is a good idea to have patterns ready in mind how to design re-usable components and their APIs.
+
+    State machines are your best friends in Elm. This makes Elm somewhat similar to digital circuit design languages like VHDL and Verilog. Sometimes I call my Elm entry point Top.elm instead of Main.elm for this reason.
+
+    Top.elm or Main.elm exists to wire together your application. Ideally as a functional program that composes its parts together by function composition, and not as a routing bus in an actor model.
+
+    One of the reasons Actor model is a pain in Elm is that the Event type needs to be known everywhere or translated and this always causes either close coupling in the application or elaborate efforts to avoid that with translation and then a maintenance headache to manage it all. This way is also a form of defunctionalization.
+
+SOLID:
+    
+    SOLID is a mnemonic acronym for a group of five good rules of thumb in computer programming. Often applied in the context of OO programming, it can also translate well into Elm.
+        
+    Single Responsibility Principle (SRP)
+    - A class should have only one reason to change, meaning it should have one specific job or responsibility. 
+Open/Closed Principle (OCP)
+    - Software entities (classes, modules, functions, etc.) should be open for extension but closed for modification. This means you should be able to add new functionality without altering existing code. 
+Liskov Substitution Principle (LSP)
+    - Subtypes must be substitutable for their base types without altering the correctness of the program. 
+Interface Segregation Principle (ISP)
+    - Clients should not be forced to depend on interfaces they don't use. This principle encourages creating smaller, more specific interfaces rather than large, monolithic ones. 
+Dependency Inversion Principle (DIP)
+    - Depend upon abstractions, not concretions. High-level modules should not depend on low-level modules, but both should depend on abstractions.
+        
+The Elm Stairway to Heaven:
+
+    Elm is a language without minimal syntax, but there is a high degree of orthogonaility in that syntax that allows you to combine in increasingly powerful ways. But always in Elm that power comes with a complexity cost. The effort/reward/complexity/risk scale therefore lines up quite well in Elm. Only pay for the reward or complexity or risk that you really need with your available effort.
+
+    So I made a chart of increasing effort up to more powerful techniques and arranged them in order. At the base are the simpler and more used techniques, and as you get higher, you get more complex and expensive techniques that should also be used less.
+
+        
+    Life of a File - Most Elm applications should start out this way and many will never grow beyond. Don't rush this phase. You are a potter at a wheel and you need to relax and let the pot take shape in your hands.
+
+    
+    Know how to Name Modules - Modules! Things are getting serious eh? The model names Model.elm and Msg.elm will likely always be present in Elm applications, because it is often necessary to split them out to avoid circular dependencies - but start learning how to name update-like and view-like things in Elm. The name `update` in Elm is NOT a keyword, you should name update-like things with names that reflect what they do in terms of modifying the Model or generating side-effects. View-like things should be named after visual parts of the application in ways that hopefully guide people visually to link up code and visuals. Therefore you should not really call any modules Update.elm and View.elm, but start using names that describe your particular application.
+
+        
+    Modules, Modules, Modules - Elm modules are an implementation of Parnas' principles of modular design. By following these principles you will understand better the purpose of modules and how to use them well. The aim is high cohesion and loose coupling. Modules should be built around types, and a module should almost always have the same name as its principal type. By building around a principal type, high cohesion results. Coupling can be lowered by using opaque types to hide implementation details, a technique that is particularly useful for re-usable code such as packages. Applications can usually tolerate a higher degree of coupling.
+    
+
+    Domain Modelling - A domain model in Elm is code that is side effect free. A domain model is a data model and pure code that describes the rules of the system for that data model. A domain model should be entirely testable in pure code tests run with elm-test. Scot Wlaschins book on Domain Modelling in F# translates into Elm very well and is the go to resource for learning how to do domain modelling in functional languages.
+
+    
+    Parse don't Validate - If you validate user input but do not parse it, when you later write a function over it, your function will still have to deal with illegal states. For example, user inputs a number as text. My function adds their input to some value. If the input to the add function is a String, I must still consider cases where it is not a number, even though I earlier validated it. If I parsed it into an Int at validation time instead, I can now safely add it without considering the illegal state which was entirely eliminated as the data crossed over into my domain model from the IO controller. Keep the raw String too, as you may still need to show it to the user for error reporting purposes.
+
+        
+    State Machine - Elm and State machines go together like coffee and cigarettes. A state machine is a great way to design a UI with states corresponding to visual states the user will see and interact with, as well as some tranisitory states such as "waiting for data" that are needed to ensure the UI correctly progresses through legal state transitions only and can recover from errors such as "fetching data failed". An Elm program is single threaded and sequential. The real world is parallel. A state machine can marshall real world events into a sequential ordering. Consider the coca cola vending machine example (irn bru machine in Scotland).
+    
+    
+    Style Guide CSS - Just as with HTML/CSS it is usually beneficial to separate content and style. The reason? So that style can evolve independantly and so that style is a thing in itself with its own specialists. If style is buried in application view logic, it can become harder to change. A clean separation is usually achieved by making use of good old CSS classes. You can describe your CSS classes with a custom type and get the benefit of typechecking so that you never typo a class name again.
+
+    
+    Style Guide elm-ui - Even without the common CSS-as-style approach, elm-ui is a good choice for Elm also. It is fast and powerful. Still make a style guide out of your styling code and maintain a stlye/content split. You can mix both elm-ui and CSS too, use elm-ui more for layout purposes and stick with CSS for the style.
+
+    
+    Defunctionalization - This is when functions return data types describing the partially evaluated output of the function, instead of having a total function that outputs its fully evaluated result. For example, in a calulator application, instead of evaluating down to a number as the user enters each operation, you could gather the operations into a syntax tree, with ops as nodes and numbers as leafs. The advantage is flexibility - you could display the syntax tree, or you could optimize the syntax tree before evaluation and so on. Note that `Msg` in Elm is a form of defunctionalization. The "out message" pattern in Elm is also a form of defuctionalization and on that makes update-like functions using it, less total. An update with an out message is saying that the update function could not complete all its work and needs to return a partial evaluation for some other function to complete - but what is the advantage obtained for the extra cost here? Use defunctionalization when you have a clear use case for doing so, as with all the techniques described here.
+
+
+    Actor Model Fetish - You naughty Elixir or Erlang programmer! But seriously the actor model is a great pattern, and Erlang concurrency is amongst the safest in no small part due to following that model. It is also inevitable that you will encounter this pattern in Elm. It is fine to use it so long as you are aware of the pitfalls. The danger is that the routing of events between modules becomes hard to understand and grows into a maintenance cost for an application. If this happens, then simple things like accessing or updating fields in your application model become a hassle and kills development speed. Also when you communicate with Msgs as events in a state machine, the more Msgs you have, the more complex your state machine needs to be. This creates more surface area for undesirable state to accumulate and can make application logic more complex than it really needs to be. Note that actor model with "out messages" is a form of Defunctionalization. Your update functions become partial functions!    
+
+    IO Monad Fetish - The true fetish of functional programmers. We can push all that unpredictable side effecty stuff to one side. Side effects in Elm as Cmd or your own Effect type are forms of Defunctionalization. You can keep this to miniumum by only having Msgs for side effects, and keeping Msg opaque outside of a component of the application - it exists purely for the processing of side effects that are entirely internal to the module. Instead of encapsulating data fields like in object oriented programming, we want to encapsulate side effects when extracting code as a component in Elm.
+           
+    
+    Poor Mans Typeclass - The type signature of a record of functions can act as an "interface" that describes a type class in Elm. You can use such interfaces to describe the behaviour of objects in a way that leaves the implementation of the object abstract. The problem in Elm is that when you make such records recursive (by wrapping in a custom types or recursive over a type parameter) you will find that the type of the implementation of the object will naturally pop out as a type parameter. As a result the poor mans typeclass does is not drop-in Liskov substitutable and not quite a realisation of the Open-Closed principle; since different implementations alter the type of the surrounding program. Useful when you want higher order functions that allow many function parameters to be injected, as the use of a record lets you name them. Very useful for implementing dependency injection between modules as function composition.
+
+    
+    Create Your Own Effects modules - The elm compiler only allows this for the special elm/* kernel modules. But it can be done nicely anyway without this by using elm-procedure. The only difference is that you will end up with the functions that create the Cmd or Sub in a record instead of top-level in a module. And there will be a small amount of boilerplate wiring needed to use elm-procedure.
+
+        
+    Object Oriented Elm - In functional programming we have `function object` and in object oriented we switch that around to `object.function`. The objects themselves become self contained, and this in turn permits a system whereby new kinds of objects can be added without changing any other code. This is the open-closed principle and it also yields Likov substution both of which are what makes object orient programming attractive. You can build open ended systems this way. Most of the time you don't need to.

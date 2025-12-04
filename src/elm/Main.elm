@@ -189,6 +189,12 @@ update msg model =
 
                             newMessage =
                                 { role = "user", blocks = [ ChatMarkBlock.PendingBlock model.userInput ] }
+
+                            newMessageIndex =
+                                List.length model.messages
+
+                            newMessageId =
+                                "msg-" ++ String.fromInt newMessageIndex
                         in
                         ( { model
                             | userInput = ""
@@ -196,7 +202,10 @@ update msg model =
                             , isWaitingForResponse = True
                             , streamState = ChatMarkBlock.initStreamState
                           }
-                        , wsApi.send socketId queryJson WsSent
+                        , Cmd.batch
+                            [ wsApi.send socketId queryJson WsSent
+                            , scrollToEntry newMessageId
+                            ]
                         )
 
                     else
@@ -219,28 +228,44 @@ update msg model =
 
 
 {-| Scroll to a heading in the messages container.
+
+To position the heading at the top of the scrollable container, we need to
+calculate where the element is within the container's scrollable content:
+
+    targetScrollPosition = elementDocY - containerDocY + currentScrollTop - topPadding
+
+Where:
+  - elementDocY: element's Y position in the document
+  - containerDocY: container's Y position in the document
+  - currentScrollTop: how much the container is already scrolled (viewport.y)
+  - topPadding: small offset so element sits nicely below the top edge
+
+This gives the absolute position of the element within the container's content,
+which is independent of the current scroll position.
+
 -}
 scrollToEntry : String -> Cmd Msg
 scrollToEntry targetId =
     Dom.getElement targetId
         |> Task.andThen
             (\element ->
-                Dom.getViewportOf "messages-container"
+                Dom.getElement "messages-container"
                     |> Task.andThen
-                        (\viewport ->
-                            let
-                                -- Calculate the target scroll position
-                                -- element.element.y is relative to the document
-                                -- We need to account for the current scroll position
-                                targetY =
-                                    element.element.y
-                                        - viewport.viewport.y
-                                        + viewport.viewport.y
-                                        - 20
-
-                                -- 20px padding from top
-                            in
-                            Dom.setViewportOf "messages-container" 0 (max 0 targetY)
+                        (\container ->
+                            Dom.getViewportOf "messages-container"
+                                |> Task.andThen
+                                    (\viewport ->
+                                        let
+                                            -- Element's position within container's content
+                                            -- Subtract 8px so it sits nicely below the top edge
+                                            targetY =
+                                                element.element.y
+                                                    - container.element.y
+                                                    + viewport.viewport.y
+                                                    - 8
+                                        in
+                                        Dom.setViewportOf "messages-container" 0 (max 0 targetY)
+                                    )
                         )
             )
         |> Task.attempt ScrollResult
@@ -401,25 +426,35 @@ viewStyled model =
         [ Main.Style.style |> Css.Global.global
         , HS.div
             [ HA.class "main-layout" ]
-            [ viewTableOfContents model.tocEntries
+            [ viewSidebar model
             , HS.div
                 [ HA.class "content-column" ]
-                [ viewHeader model
-                , viewMessages model
+                [ viewMessages model
                 , viewInput model
                 ]
             ]
         ]
 
 
-viewHeader : Model -> Html Msg
-viewHeader model =
-    HS.div
-        [ HA.class "header" ]
-        [ HS.h1
-            [ HA.class "header-title" ]
-            [ HS.text "CRAG Web Interface" ]
-        , viewConnectionStatus model.connectionStatus
+{-| Render the left sidebar with connection status and table of contents.
+-}
+viewSidebar : Model -> Html Msg
+viewSidebar model =
+    HS.nav
+        [ HA.class "toc-sidebar" ]
+        [ viewConnectionStatus model.connectionStatus
+        , HS.h2
+            [ HA.class "toc-title" ]
+            [ HS.text "Contents" ]
+        , if List.isEmpty model.tocEntries then
+            HS.p
+                [ HA.class "toc-empty" ]
+                [ HS.text "No headings yet" ]
+
+          else
+            HS.ul
+                [ HA.class "toc-list" ]
+                (List.map viewTocEntry model.tocEntries)
         ]
 
 
@@ -458,25 +493,6 @@ viewConnectionStatus status =
         ]
 
 
-{-| Render the table of contents sidebar.
--}
-viewTableOfContents : List TocEntry -> Html Msg
-viewTableOfContents entries =
-    HS.nav
-        [ HA.class "toc-sidebar" ]
-        [ HS.h2
-            [ HA.class "toc-title" ]
-            [ HS.text "Contents" ]
-        , if List.isEmpty entries then
-            HS.p
-                [ HA.class "toc-empty" ]
-                [ HS.text "No headings yet" ]
-
-          else
-            HS.ul
-                [ HA.class "toc-list" ]
-                (List.map viewTocEntry entries)
-        ]
 
 
 {-| Render a single TOC entry.
@@ -512,20 +528,28 @@ viewMessages model =
 
         allContent =
             List.indexedMap viewMessageWithIndex model.messages ++ streamingMessage
+
+        -- Dynamic spacer that fills remaining viewport space
+        -- This allows the last message to be scrolled to the top
+        spacer =
+            HS.div [ HA.class "messages-spacer" ] []
     in
     HS.div
         [ HA.class "messages-container"
         , HA.id "messages-container"
         ]
-        (if List.isEmpty model.messages && not model.isWaitingForResponse then
-            [ HS.p
-                [ HA.class "messages-empty" ]
-                [ HS.text "No messages yet. Send a message to start chatting." ]
-            ]
+        [ HS.div
+            [ HA.class "messages-content" ]
+            (if List.isEmpty model.messages && not model.isWaitingForResponse then
+                [ HS.p
+                    [ HA.class "messages-empty" ]
+                    [ HS.text "No messages yet. Send a message to start chatting." ]
+                ]
 
-         else
-            allContent
-        )
+             else
+                allContent ++ [ spacer ]
+            )
+        ]
 
 
 viewStreamingMessage : Int -> StreamState -> String -> Html Msg
@@ -542,9 +566,6 @@ viewStreamingMessage msgIndex streamState pendingText =
         , HA.class "message-assistant"
         ]
         [ HS.div
-            [ HA.class "message-label" ]
-            [ HS.text "Assistant" ]
-        , HS.div
             [ HA.class "message-content" ]
             (ChatMarkBlock.renderBlocksWithIds idPrefix completedBlocks pendingText)
         ]
@@ -555,19 +576,19 @@ viewStreamingMessage msgIndex streamState pendingText =
 viewMessageWithIndex : Int -> ChatMessage -> Html Msg
 viewMessageWithIndex msgIndex message =
     let
-        ( roleClass, label ) =
+        roleClass =
             case message.role of
                 "user" ->
-                    ( "message-user", "You" )
+                    "message-user"
 
                 "assistant" ->
-                    ( "message-assistant", "Assistant" )
+                    "message-assistant"
 
                 "error" ->
-                    ( "message-error", "Error" )
+                    "message-error"
 
                 _ ->
-                    ( "message-assistant", message.role )
+                    "message-assistant"
 
         idPrefix =
             "msg-" ++ String.fromInt msgIndex
@@ -583,11 +604,9 @@ viewMessageWithIndex msgIndex message =
     HS.div
         [ HA.class "message"
         , HA.class roleClass
+        , HA.id idPrefix
         ]
         [ HS.div
-            [ HA.class "message-label" ]
-            [ HS.text label ]
-        , HS.div
             [ HA.class "message-content" ]
             renderedContent
         ]

@@ -265,10 +265,18 @@ processLineNormal line state =
     let
         trimmed =
             String.trim line
+
+        -- Check if pending ends with a blank line (we're after a blank line)
+        afterBlankLine =
+            String.endsWith "\n\n" state.pending
+
+        -- Check if this line is at column 0 (no leading whitespace)
+        isAtColumnZero =
+            not (String.isEmpty line) && not (String.startsWith " " line) && not (String.startsWith "\t" line)
     in
     if String.isEmpty trimmed then
-        -- Blank line - complete current block
-        completePendingBlock state
+        -- Blank line - accumulate it, we'll decide on split when we see next content
+        { state | pending = state.pending ++ "\n" }
 
     else if isCodeFenceStart line then
         -- Start code fence
@@ -311,8 +319,18 @@ processLineNormal line state =
             | completed = stateWithCompleted.completed ++ [ line ]
         }
 
-    else if isListItemStart line && not (String.isEmpty state.pending) && not (isListItemContinuation state.pending) then
-        -- New list item after non-list content
+    else if afterBlankLine && isAtColumnZero && isListItemStart line && not (isListItemContinuation state.pending) then
+        -- New top-level list after blank line, and we're not continuing an existing list
+        let
+            stateWithCompleted =
+                completePendingBlock state
+        in
+        { stateWithCompleted
+            | pending = line ++ "\n"
+        }
+
+    else if afterBlankLine && isAtColumnZero && not (isListItemContinuation state.pending) && not (isBlockquoteContinuation state.pending) then
+        -- New paragraph at column 0 after blank line (not continuing list/blockquote)
         let
             stateWithCompleted =
                 completePendingBlock state
