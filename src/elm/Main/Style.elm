@@ -101,6 +101,11 @@ colorPositive =
     Css.hex "1a7032"
 
 
+colorWarning : Css.Color
+colorWarning =
+    Css.hex "e67e22"
+
+
 colorNegative : Css.Color
 colorNegative =
     Css.hex "d32205"
@@ -614,39 +619,64 @@ messageStyles =
 
 inputStyles : List Css.Global.Snippet
 inputStyles =
-    [ Css.Global.class "input-container"
-        [ Css.displayFlex
-        , Css.property "gap" "0.5rem"
-        , Css.padding space2
-        , Css.backgroundColor colorBackgroundSecondary
-        , Css.borderTop3 (Css.px 1) Css.solid colorBorderLight
+    [ -- Outer container with padding (like messages-content) and bottom margin
+      Css.Global.class "input-container"
+        [ Css.padding space2
+        , Css.paddingBottom (Css.px 8)
         , mediaMedium
-            [ Css.property "gap" "1rem"
-            , Css.padding space3
+            [ Css.padding space3
+            , Css.paddingBottom (Css.px 8)
             ]
         ]
+
+    -- Wrapper with top/bottom borders like user messages
+    , Css.Global.class "input-wrapper"
+        [ Css.position Css.relative
+        , Css.backgroundColor colorBackground
+        , Css.borderTop3 (Css.px 5) Css.solid colorBorder
+        , Css.borderBottom3 (Css.px 5) Css.solid colorBorder
+        , Css.property "transition" "border-color 0.2s"
+        ]
+
+    -- Inactive state (grey borders) - disabled/waiting
+    , Css.Global.class "input-wrapper-inactive"
+        [ Css.borderTopColor colorBorder
+        , Css.borderBottomColor colorBorder
+        ]
+
+    -- Ready state (orange borders) - enabled but not focused
+    , Css.Global.class "input-wrapper-ready"
+        [ Css.borderTopColor colorWarning
+        , Css.borderBottomColor colorWarning
+        ]
+
+    -- Focused state (green borders) - actively being used
+    , Css.Global.class "input-wrapper-focused"
+        [ Css.borderTopColor colorPositive
+        , Css.borderBottomColor colorPositive
+        ]
+
+    -- Textarea - full width, no borders, monospace font
+    -- Has bottom padding to reserve space for toolbar (always present to keep height stable)
     , Css.Global.class "input-textarea"
-        [ Css.flex (Css.int 1)
+        [ Css.width (Css.pct 100)
+        , Css.property "box-sizing" "border-box"
         , Css.padding space2
-        , Css.border3 (Css.px 2) Css.solid colorBorder
-        , Css.borderRadius (Css.px 4)
+        , Css.paddingBottom (Css.rem 2)
+        , Css.border Css.zero
         , Css.fontSize (Css.rem 1)
         , Css.lineHeight (Css.num 1.5)
         , Css.resize Css.none
-        , Css.fontFamilies fontStack
+        , Css.fontFamilies fontStackMono
         , Css.color colorText
         , Css.backgroundColor colorBackground
-        , Css.minHeight (Css.rem 3)
-        , Css.property "transition" "border-color 0.2s, box-shadow 0.2s"
+        , Css.outline Css.none
         , mediaMedium
             [ Css.fontSize (Css.rem 1.1875)
             , Css.lineHeight (Css.num 1.68)
             ]
         , Css.focus
             [ Css.outline Css.none
-            , Css.borderColor colorFocus
-            , Css.boxShadow5 Css.inset Css.zero (Css.px -3) Css.zero colorBorderDark
-            , Css.backgroundColor colorFocus
             ]
         , Css.disabled
             [ Css.backgroundColor colorBackgroundTertiary
@@ -654,24 +684,40 @@ inputStyles =
             , Css.color colorTextSecondary
             ]
         ]
-    , Css.Global.class "send-button"
-        [ Css.padding2 space2 space3
+
+    -- Override global yellow focus style for input-textarea
+    , Css.Global.selector ".input-textarea:focus"
+        [ Css.outline Css.none
+        , Css.property "outline" "none"
+        ]
+
+    -- Toolbar that appears at bottom when focused - positioned absolutely
+    , Css.Global.class "input-toolbar"
+        [ Css.position Css.absolute
+        , Css.bottom Css.zero
+        , Css.left Css.zero
+        , Css.right Css.zero
+        , Css.displayFlex
+        , Css.justifyContent Css.flexEnd
+        , Css.alignItems Css.center
+        , Css.padding2 (Css.rem 0.25) space2
+        , Css.backgroundColor colorBackground
+        , Css.borderTop3 (Css.px 1) Css.solid colorBorderLight
+        ]
+
+    -- Small send button with arrow icon
+    , Css.Global.class "input-send-button"
+        [ Css.padding2 (Css.rem 0.25) (Css.rem 0.5)
         , Css.color colorBackground
         , Css.border Css.zero
         , Css.borderRadius (Css.px 4)
         , Css.fontSize (Css.rem 1)
         , Css.fontWeight (Css.int 700)
-        , Css.fontFamilies fontStack
-        , Css.minHeight (Css.rem 3)
-        , Css.minWidth (Css.rem 5)
+        , Css.lineHeight (Css.num 1)
         , Css.property "transition" "background-color 0.2s, transform 0.1s"
-        , mediaMedium
-            [ Css.fontSize (Css.rem 1.1875)
-            , Css.padding2 space2 space4
-            ]
         ]
-    , Css.Global.class "send-button-enabled"
-        [ Css.backgroundColor colorBrand
+    , Css.Global.class "input-send-button-enabled"
+        [ Css.backgroundColor colorPositive
         , Css.cursor Css.pointer
         , Css.hover
             [ Css.backgroundColor colorBrandHover
@@ -680,7 +726,7 @@ inputStyles =
             [ Css.property "transform" "translateY(1px)"
             ]
         ]
-    , Css.Global.class "send-button-disabled"
+    , Css.Global.class "input-send-button-disabled"
         [ Css.backgroundColor colorBorder
         , Css.cursor Css.notAllowed
         ]

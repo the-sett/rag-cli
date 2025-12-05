@@ -64,6 +64,8 @@ type alias Model =
     , streamState : StreamState
     , isWaitingForResponse : Bool
     , tocEntries : List TocEntry
+    , inputFocused : Bool
+    , lastEnterTime : Int
     }
 
 
@@ -96,6 +98,9 @@ type Msg
     | Reconnect
     | ScrollToEntry String
     | ScrollResult (Result Dom.Error ())
+    | InputFocused
+    | InputBlurred
+    | InputKeyDown Int
 
 
 
@@ -127,6 +132,8 @@ init flagsValue =
             , streamState = ChatMarkBlock.initStreamState
             , isWaitingForResponse = False
             , tocEntries = []
+            , inputFocused = False
+            , lastEnterTime = 0
             }
     in
     ( model
@@ -225,6 +232,25 @@ update msg model =
         ScrollResult _ ->
             -- Ignore scroll result (success or failure)
             ( model, Cmd.none )
+
+        InputFocused ->
+            ( { model | inputFocused = True }, Cmd.none )
+
+        InputBlurred ->
+            ( { model | inputFocused = False }, Cmd.none )
+
+        InputKeyDown currentTime ->
+            -- Double-Enter detection: if Enter pressed twice within 400ms, send message
+            let
+                timeDiff =
+                    currentTime - model.lastEnterTime
+            in
+            if timeDiff < 400 && timeDiff > 0 then
+                -- Double-enter detected, trigger send
+                update SendMessage { model | lastEnterTime = 0 }
+
+            else
+                ( { model | lastEnterTime = currentTime }, Cmd.none )
 
 
 {-| Scroll to a heading in the messages container.
@@ -623,36 +649,82 @@ viewInput model =
                 _ ->
                     True
 
-        buttonClass =
-            if isDisabled || String.trim model.userInput == "" then
-                "send-button-disabled"
+        -- Determine wrapper state class for border colors
+        wrapperStateClass =
+            if isDisabled then
+                "input-wrapper-inactive"
+
+            else if model.inputFocused then
+                "input-wrapper-focused"
 
             else
-                "send-button-enabled"
+                "input-wrapper-ready"
+
+        -- Calculate rows based on newlines in input (min 2, grows with content)
+        lineCount =
+            model.userInput
+                |> String.split "\n"
+                |> List.length
+
+        rows =
+            max 2 lineCount
+
+        canSend =
+            not isDisabled && String.trim model.userInput /= ""
     in
     HS.div
         [ HA.class "input-container" ]
-        [ HS.textarea
-            [ HA.class "input-textarea"
-            , HA.value model.userInput
-            , HE.onInput UserInputChanged
-            , HA.placeholder "Type your message..."
-            , HA.rows 3
-            , HA.disabled isDisabled
+        [ HS.div
+            [ HA.class "input-wrapper"
+            , HA.class wrapperStateClass
             ]
-            []
-        , HS.button
-            [ HA.class "send-button"
-            , HA.class buttonClass
-            , HE.onClick SendMessage
-            , HA.disabled (isDisabled || String.trim model.userInput == "")
-            ]
-            [ HS.text
-                (if model.isWaitingForResponse then
-                    "..."
+            [ HS.textarea
+                [ HA.class "input-textarea"
+                , HA.value model.userInput
+                , HE.onInput UserInputChanged
+                , HE.onFocus InputFocused
+                , HE.onBlur InputBlurred
+                , HE.on "keydown" enterKeyDecoder
+                , HA.placeholder "Type your message... (press Enter twice to send)"
+                , HA.rows rows
+                , HA.disabled isDisabled
+                ]
+                []
+            , if model.inputFocused then
+                HS.div
+                    [ HA.class "input-toolbar" ]
+                    [ HS.button
+                        [ HA.class "input-send-button"
+                        , if canSend then
+                            HA.class "input-send-button-enabled"
 
-                 else
-                    "Send"
-                )
+                          else
+                            HA.class "input-send-button-disabled"
+                        , HE.onClick SendMessage
+                        , HA.disabled (not canSend)
+                        , HA.title "Send message"
+                        ]
+                        [ HS.text "→" ]
+                    ]
+
+              else
+                HS.text ""
             ]
         ]
+
+
+{-| Decoder for Enter key press that captures the timestamp.
+Only triggers on Enter key, ignores other keys.
+-}
+enterKeyDecoder : Decode.Decoder Msg
+enterKeyDecoder =
+    Decode.field "key" Decode.string
+        |> Decode.andThen
+            (\key ->
+                if key == "Enter" then
+                    Decode.field "timeStamp" Decode.float
+                        |> Decode.map (round >> InputKeyDown)
+
+                else
+                    Decode.fail "Not Enter key"
+            )
