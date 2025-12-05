@@ -77,13 +77,14 @@ type alias ChatMessage =
     }
 
 
-{-| Table of contents entry derived from markdown headings.
+{-| Table of contents entry derived from markdown headings or user queries.
 -}
 type alias TocEntry =
     { id : String -- Unique DOM id for scrolling target
-    , level : Int -- Heading level (1-6)
-    , text : String -- Heading text content
+    , level : Int -- Heading level (1-6), 0 for user queries
+    , text : String -- Heading text content or truncated query
     , messageIndex : Int -- Which message this belongs to
+    , isUserQuery : Bool -- True for user query entries
     }
 
 
@@ -205,12 +206,17 @@ update msg model =
 
                             newMessageId =
                                 "msg-" ++ String.fromInt newMessageIndex
+
+                            -- Add user query to TOC
+                            userTocEntry =
+                                generateUserTocEntry newMessageIndex model.userInput
                         in
                         ( { model
                             | userInput = ""
                             , messages = model.messages ++ [ newMessage ]
                             , isWaitingForResponse = True
                             , streamState = ChatMarkBlock.initStreamState
+                            , tocEntriesHistory = model.tocEntriesHistory ++ [ userTocEntry ]
                           }
                         , Cmd.batch
                             [ wsApi.send socketId queryJson WsSent
@@ -438,8 +444,37 @@ generateTocEntriesForBlocks messageIndex blocks =
                 , level = heading.level
                 , text = heading.text
                 , messageIndex = messageIndex
+                , isUserQuery = False
                 }
             )
+
+
+{-| Generate a TOC entry for a user query message.
+Truncates to first 50 characters.
+-}
+generateUserTocEntry : Int -> String -> TocEntry
+generateUserTocEntry messageIndex queryText =
+    let
+        -- Get first line and truncate to 50 chars
+        firstLine =
+            queryText
+                |> String.lines
+                |> List.head
+                |> Maybe.withDefault queryText
+
+        truncatedText =
+            if String.length firstLine > 50 then
+                String.left 50 firstLine
+
+            else
+                firstLine
+    in
+    { id = "msg-" ++ String.fromInt messageIndex
+    , level = 0
+    , text = truncatedText
+    , messageIndex = messageIndex
+    , isUserQuery = True
+    }
 
 
 
@@ -494,6 +529,12 @@ viewSidebar model =
     let
         allTocEntries =
             model.tocEntriesHistory ++ model.tocEntriesStreaming
+
+        -- Pair each entry with whether the previous entry was a user query
+        entriesWithPrevUserFlag =
+            List.map2 Tuple.pair
+                (False :: List.map .isUserQuery allTocEntries)
+                allTocEntries
     in
     HS.nav
         [ HA.class "toc-sidebar" ]
@@ -509,7 +550,7 @@ viewSidebar model =
           else
             HS.ul
                 [ HA.class "toc-list" ]
-                (List.map viewTocEntry allTocEntries)
+                (List.map viewTocEntryWithContext entriesWithPrevUserFlag)
         ]
 
 
@@ -548,14 +589,32 @@ viewConnectionStatus status =
         ]
 
 
-{-| Render a single TOC entry.
+{-| Render a single TOC entry with context about the previous entry.
 -}
-viewTocEntry : TocEntry -> Html Msg
-viewTocEntry entry =
+viewTocEntryWithContext : ( Bool, TocEntry ) -> Html Msg
+viewTocEntryWithContext ( prevWasUserQuery, entry ) =
+    let
+        entryClass =
+            if entry.isUserQuery then
+                "toc-entry-user"
+
+            else
+                "toc-level-" ++ String.fromInt entry.level
+
+        -- Add adjacent class if this user entry follows another user entry
+        adjacentClass =
+            if entry.isUserQuery && prevWasUserQuery then
+                [ HA.class "toc-entry-user-adjacent" ]
+
+            else
+                []
+    in
     HS.li
-        [ HA.class "toc-entry"
-        , HA.class ("toc-level-" ++ String.fromInt entry.level)
-        ]
+        ([ HA.class "toc-entry"
+         , HA.class entryClass
+         ]
+            ++ adjacentClass
+        )
         [ HS.button
             [ HA.class "toc-link"
             , HE.onClick (ScrollToEntry entry.id)

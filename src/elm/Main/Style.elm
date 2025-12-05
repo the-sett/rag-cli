@@ -463,6 +463,28 @@ mainLayoutStyles =
         , Css.padding space2
         ]
 
+    -- User query TOC entries - thin blue borders, single line with ellipsis
+    -- Border is on the li element so adjacent sibling selector works for collapsing
+    , Css.Global.class "toc-entry-user"
+        [ Css.borderTop3 (Css.px 2) Css.solid colorBrand
+        , Css.borderBottom3 (Css.px 2) Css.solid colorBrand
+        , Css.Global.children
+            [ Css.Global.class "toc-link"
+                [ Css.paddingLeft space1
+                , Css.borderRadius Css.zero
+                , Css.overflow Css.hidden
+                , Css.textOverflow Css.ellipsis
+                , Css.whiteSpace Css.noWrap
+                , Css.color colorTextSecondary
+                ]
+            ]
+        ]
+
+    -- Collapse borders when user entries are adjacent - use negative margin
+    , Css.Global.class "toc-entry-user-adjacent"
+        [ Css.marginTop (Css.px -2)
+        ]
+
     -- Content column (right 75%)
     , Css.Global.class "content-column"
         [ Css.flex (Css.int 1)
