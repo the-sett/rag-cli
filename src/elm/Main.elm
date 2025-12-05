@@ -476,7 +476,11 @@ viewStyled model =
             [ viewSidebar model
             , HS.div
                 [ HA.class "content-column" ]
-                [ viewMessages model
+                [ HS.div
+                    [ HA.class "messages-wrapper" ]
+                    [ viewMessages model
+                    , HS.div [ HA.class "messages-fade" ] []
+                    ]
                 , viewInput model
                 ]
             ]

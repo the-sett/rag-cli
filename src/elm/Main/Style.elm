@@ -568,12 +568,33 @@ connectionStatusStyles =
 
 messagesStyles : List Css.Global.Snippet
 messagesStyles =
-    [ Css.Global.class "messages-container"
+    [ -- Wrapper for messages container + fade overlay
+      Css.Global.class "messages-wrapper"
         [ Css.flex (Css.int 1)
+        , Css.position Css.relative
+        , Css.minHeight Css.zero
+        , Css.overflow Css.hidden
+        ]
+    , Css.Global.class "messages-container"
+        [ Css.position Css.absolute
+        , Css.top Css.zero
+        , Css.left Css.zero
+        , Css.right Css.zero
+        , Css.bottom Css.zero
         , Css.overflowY Css.auto
         , Css.overflowX Css.hidden
         , Css.backgroundColor colorBackground
-        , Css.minHeight Css.zero -- Important for flex scroll
+        ]
+
+    -- Fade-out gradient at bottom of messages area
+    , Css.Global.class "messages-fade"
+        [ Css.position Css.absolute
+        , Css.bottom Css.zero
+        , Css.left Css.zero
+        , Css.right Css.zero
+        , Css.height (Css.px 16)
+        , Css.property "background" "linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,1))"
+        , Css.pointerEvents Css.none
         ]
     , Css.Global.class "messages-content"
         [ Css.displayFlex
