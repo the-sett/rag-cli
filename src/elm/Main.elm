@@ -8,6 +8,7 @@ import Html.Styled as HS exposing (Html)
 import Html.Styled.Attributes as HA
 import Html.Styled.Events as HE
 import Json.Decode as Decode exposing (Value)
+import Main.Debug
 import Main.Style
 import Markdown.ChatMarkBlock as ChatMarkBlock exposing (ChatMarkBlock, StreamState)
 import Ports
@@ -63,7 +64,8 @@ type alias Model =
     , messages : List ChatMessage
     , streamState : StreamState
     , isWaitingForResponse : Bool
-    , tocEntries : List TocEntry
+    , tocEntriesHistory : List TocEntry -- From finalized messages (cached)
+    , tocEntriesStreaming : List TocEntry -- From current streaming response
     , inputFocused : Bool
     , lastEnterTime : Int
     }
@@ -131,7 +133,8 @@ init flagsValue =
             , messages = []
             , streamState = ChatMarkBlock.initStreamState
             , isWaitingForResponse = False
-            , tocEntries = []
+            , tocEntriesHistory = []
+            , tocEntriesStreaming = []
             , inputFocused = False
             , lastEnterTime = 0
             }
@@ -258,9 +261,11 @@ update msg model =
 To position the heading at the top of the scrollable container, we need to
 calculate where the element is within the container's scrollable content:
 
-    targetScrollPosition = elementDocY - containerDocY + currentScrollTop - topPadding
+    targetScrollPosition =
+        elementDocY - containerDocY + currentScrollTop - topPadding
 
 Where:
+
   - elementDocY: element's Y position in the document
   - containerDocY: container's Y position in the document
   - currentScrollTop: how much the container is already scrolled (viewport.y)
@@ -320,7 +325,21 @@ handleServerMessage payload model =
         Ok serverMsg ->
             case serverMsg of
                 DeltaMessage content ->
-                    ( { model | streamState = ChatMarkBlock.feedDelta content model.streamState }
+                    let
+                        newStreamState =
+                            ChatMarkBlock.feedDelta content model.streamState
+
+                        -- Build TOC entries incrementally from streaming blocks
+                        streamingMessageIndex =
+                            List.length model.messages
+
+                        newStreamingTocEntries =
+                            generateTocEntriesForBlocks streamingMessageIndex newStreamState.completedBlocks
+                    in
+                    ( { model
+                        | streamState = newStreamState
+                        , tocEntriesStreaming = newStreamingTocEntries
+                      }
                     , Cmd.none
                     )
 
@@ -335,14 +354,23 @@ handleServerMessage payload model =
                         newMessages =
                             model.messages ++ [ assistantMessage ]
 
-                        newTocEntries =
-                            generateTocEntries newMessages
+                        -- Generate final TOC entries for this message
+                        messageIndex =
+                            List.length model.messages
+
+                        finalTocEntries =
+                            generateTocEntriesForBlocks messageIndex finalBlocks
+
+                        -- Merge into history, clear streaming
+                        newTocEntriesHistory =
+                            model.tocEntriesHistory ++ finalTocEntries
                     in
                     ( { model
                         | messages = newMessages
                         , streamState = ChatMarkBlock.initStreamState
                         , isWaitingForResponse = False
-                        , tocEntries = newTocEntries
+                        , tocEntriesHistory = newTocEntriesHistory
+                        , tocEntriesStreaming = []
                       }
                     , Cmd.none
                     )
@@ -356,6 +384,7 @@ handleServerMessage payload model =
                         | messages = model.messages ++ [ errorChatMessage ]
                         , streamState = ChatMarkBlock.initStreamState
                         , isWaitingForResponse = False
+                        , tocEntriesStreaming = []
                       }
                     , Cmd.none
                     )
@@ -390,36 +419,27 @@ serverMessageDecoder =
             )
 
 
-{-| Generate TOC entries from all messages.
-Only extracts headings from assistant messages.
+{-| Generate TOC entries from a list of blocks at a given message index.
+Used for both streaming blocks and finalized message blocks.
 -}
-generateTocEntries : List ChatMessage -> List TocEntry
-generateTocEntries messages =
-    messages
+generateTocEntriesForBlocks : Int -> List ChatMarkBlock -> List TocEntry
+generateTocEntriesForBlocks messageIndex blocks =
+    let
+        headings =
+            ChatMarkBlock.extractHeadings blocks
+
+        idPrefix =
+            "msg-" ++ String.fromInt messageIndex
+    in
+    headings
         |> List.indexedMap
-            (\msgIdx message ->
-                if message.role == "assistant" then
-                    let
-                        headings =
-                            ChatMarkBlock.extractHeadings message.blocks
-
-                        idPrefix =
-                            "msg-" ++ String.fromInt msgIdx
-                    in
-                    headings
-                        |> List.indexedMap
-                            (\headingIdx heading ->
-                                { id = idPrefix ++ "-heading-" ++ String.fromInt headingIdx
-                                , level = heading.level
-                                , text = heading.text
-                                , messageIndex = msgIdx
-                                }
-                            )
-
-                else
-                    []
+            (\headingIdx heading ->
+                { id = idPrefix ++ "-heading-" ++ String.fromInt headingIdx
+                , level = heading.level
+                , text = heading.text
+                , messageIndex = messageIndex
+                }
             )
-        |> List.concat
 
 
 
@@ -449,7 +469,8 @@ viewStyled : Model -> Html Msg
 viewStyled model =
     HS.div
         [ HA.class "app-container" ]
-        [ Main.Style.style |> Css.Global.global
+        [ -- Main.Debug.global |> Css.Global.global
+          Main.Style.style |> Css.Global.global
         , HS.div
             [ HA.class "main-layout" ]
             [ viewSidebar model
@@ -466,13 +487,17 @@ viewStyled model =
 -}
 viewSidebar : Model -> Html Msg
 viewSidebar model =
+    let
+        allTocEntries =
+            model.tocEntriesHistory ++ model.tocEntriesStreaming
+    in
     HS.nav
         [ HA.class "toc-sidebar" ]
         [ viewConnectionStatus model.connectionStatus
         , HS.h2
             [ HA.class "toc-title" ]
             [ HS.text "Contents" ]
-        , if List.isEmpty model.tocEntries then
+        , if List.isEmpty allTocEntries then
             HS.p
                 [ HA.class "toc-empty" ]
                 [ HS.text "No headings yet" ]
@@ -480,7 +505,7 @@ viewSidebar model =
           else
             HS.ul
                 [ HA.class "toc-list" ]
-                (List.map viewTocEntry model.tocEntries)
+                (List.map viewTocEntry allTocEntries)
         ]
 
 
@@ -517,8 +542,6 @@ viewConnectionStatus status =
             _ ->
                 HS.text ""
         ]
-
-
 
 
 {-| Render a single TOC entry.
@@ -660,15 +683,6 @@ viewInput model =
             else
                 "input-wrapper-ready"
 
-        -- Calculate rows based on newlines in input (min 2, grows with content)
-        lineCount =
-            model.userInput
-                |> String.split "\n"
-                |> List.length
-
-        rows =
-            max 2 lineCount
-
         canSend =
             not isDisabled && String.trim model.userInput /= ""
     in
@@ -684,46 +698,56 @@ viewInput model =
                 , HE.onInput UserInputChanged
                 , HE.onFocus InputFocused
                 , HE.onBlur InputBlurred
-                , HE.on "keydown" enterKeyDecoder
+                , HE.preventDefaultOn "keydown" (enterKeyDecoder model.lastEnterTime)
                 , HA.placeholder "Type your message... (press Enter twice to send)"
-                , HA.rows rows
                 , HA.disabled isDisabled
                 ]
                 []
-            , if model.inputFocused then
-                HS.div
-                    [ HA.class "input-toolbar" ]
-                    [ HS.button
-                        [ HA.class "input-send-button"
-                        , if canSend then
-                            HA.class "input-send-button-enabled"
+            , HS.div
+                [ HA.class "input-toolbar" ]
+                [ HS.button
+                    [ HA.class "input-send-button"
+                    , if canSend then
+                        HA.class "input-send-button-enabled"
 
-                          else
-                            HA.class "input-send-button-disabled"
-                        , HE.onClick SendMessage
-                        , HA.disabled (not canSend)
-                        , HA.title "Send message"
-                        ]
-                        [ HS.text "→" ]
+                      else
+                        HA.class "input-send-button-disabled"
+                    , HE.onClick SendMessage
+                    , HA.disabled (not canSend)
+                    , HA.title "Send message"
                     ]
-
-              else
-                HS.text ""
+                    [ HS.text "→" ]
+                ]
             ]
         ]
 
 
 {-| Decoder for Enter key press that captures the timestamp.
 Only triggers on Enter key, ignores other keys.
+Returns (Msg, preventDefault) - we prevent default on double-enter to stop
+the newline from being added after the input is cleared.
 -}
-enterKeyDecoder : Decode.Decoder Msg
-enterKeyDecoder =
+enterKeyDecoder : Int -> Decode.Decoder ( Msg, Bool )
+enterKeyDecoder lastEnterTime =
     Decode.field "key" Decode.string
         |> Decode.andThen
             (\key ->
                 if key == "Enter" then
                     Decode.field "timeStamp" Decode.float
-                        |> Decode.map (round >> InputKeyDown)
+                        |> Decode.map
+                            (\timestamp ->
+                                let
+                                    currentTime =
+                                        round timestamp
+
+                                    timeDiff =
+                                        currentTime - lastEnterTime
+
+                                    isDoubleEnter =
+                                        timeDiff < 400 && timeDiff > 0
+                                in
+                                ( InputKeyDown currentTime, isDoubleEnter )
+                            )
 
                 else
                     Decode.fail "Not Enter key"

@@ -3,7 +3,7 @@ module Main.Style exposing (style)
 {-| CSS styles for the CRAG web interface.
 
 Uses elm-css to define styles following the Scottish Government Design System.
-See: https://designsystem.gov.scot/
+See: <https://designsystem.gov.scot/>
 
 Color palette, typography, spacing, and responsive breakpoints are based on
 the gov.scot design system for optimal readability and accessibility.
@@ -21,6 +21,7 @@ style : List Css.Global.Snippet
 style =
     List.concat
         [ globalStyles
+        , scrollbarStyles
         , appContainerStyles
         , mainLayoutStyles
         , headerStyles
@@ -277,6 +278,38 @@ globalStyles =
 
 
 -- =============================================================================
+-- Scrollbar Styles
+-- =============================================================================
+
+
+scrollbarStyles : List Css.Global.Snippet
+scrollbarStyles =
+    [ -- Webkit/Blink browsers (Chrome, Safari, Edge)
+      Css.Global.selector "::-webkit-scrollbar"
+        [ Css.width (Css.px 8)
+        , Css.height (Css.px 8)
+        ]
+    , Css.Global.selector "::-webkit-scrollbar-track"
+        [ Css.backgroundColor Css.transparent
+        ]
+    , Css.Global.selector "::-webkit-scrollbar-thumb"
+        [ Css.backgroundColor (Css.hex "d0d0d0")
+        , Css.borderRadius (Css.px 4)
+        ]
+    , Css.Global.selector "::-webkit-scrollbar-thumb:hover"
+        [ Css.backgroundColor (Css.hex "b0b0b0")
+        ]
+
+    -- Firefox
+    , Css.Global.selector "*"
+        [ Css.property "scrollbar-width" "thin"
+        , Css.property "scrollbar-color" "#d0d0d0 transparent"
+        ]
+    ]
+
+
+
+-- =============================================================================
 -- App Container Styles
 -- =============================================================================
 
@@ -329,12 +362,13 @@ mainLayoutStyles =
             ]
         ]
     , Css.Global.class "toc-title"
-        [ Css.fontSize (Css.rem 0.875)
+        [ Css.fontSize (Css.rem 1)
+        , Css.lineHeight (Css.num 1.5)
         , Css.fontWeight (Css.int 700)
         , Css.textTransform Css.uppercase
         , Css.letterSpacing (Css.em 0.05)
         , Css.color colorTextSecondary
-        , Css.margin4 Css.zero Css.zero space2 Css.zero
+        , Css.margin4 Css.zero Css.zero space1 Css.zero
         , Css.paddingBottom space1
         , Css.borderBottom3 (Css.px 1) Css.solid colorBorderLight
         ]
@@ -356,8 +390,8 @@ mainLayoutStyles =
         , Css.border Css.zero
         , Css.backgroundColor Css.transparent
         , Css.color colorText
-        , Css.fontSize (Css.rem 0.875)
-        , Css.lineHeight (Css.num 1.4)
+        , Css.fontSize (Css.rem 1)
+        , Css.lineHeight (Css.num 1.5)
         , Css.textAlign Css.left
         , Css.cursor Css.pointer
         , Css.textDecoration Css.none
@@ -394,7 +428,6 @@ mainLayoutStyles =
         [ Css.Global.children
             [ Css.Global.class "toc-link"
                 [ Css.paddingLeft space5
-                , Css.fontSize (Css.rem 0.8125)
                 ]
             ]
         ]
@@ -402,7 +435,6 @@ mainLayoutStyles =
         [ Css.Global.children
             [ Css.Global.class "toc-link"
                 [ Css.paddingLeft space6
-                , Css.fontSize (Css.rem 0.8125)
                 , Css.color colorTextSecondary
                 ]
             ]
@@ -411,7 +443,6 @@ mainLayoutStyles =
         [ Css.Global.children
             [ Css.Global.class "toc-link"
                 [ Css.paddingLeft space6
-                , Css.fontSize (Css.rem 0.75)
                 , Css.color colorTextSecondary
                 ]
             ]
@@ -420,14 +451,14 @@ mainLayoutStyles =
         [ Css.Global.children
             [ Css.Global.class "toc-link"
                 [ Css.paddingLeft space6
-                , Css.fontSize (Css.rem 0.75)
                 , Css.color colorTextSecondary
                 ]
             ]
         ]
     , Css.Global.class "toc-empty"
         [ Css.color colorTextSecondary
-        , Css.fontSize (Css.rem 0.875)
+        , Css.fontSize (Css.rem 1)
+        , Css.lineHeight (Css.num 1.5)
         , Css.fontStyle Css.italic
         , Css.padding space2
         ]
@@ -486,10 +517,11 @@ connectionStatusStyles =
         [ Css.displayFlex
         , Css.alignItems Css.center
         , Css.property "gap" "0.5rem"
-        , Css.fontSize (Css.rem 0.75)
+        , Css.fontSize (Css.rem 1)
+        , Css.lineHeight (Css.num 1.5)
         , Css.color colorTextSecondary
-        , Css.marginBottom space2
-        , Css.paddingBottom space2
+        , Css.marginBottom space1
+        , Css.paddingBottom space1
         , Css.borderBottom3 (Css.px 1) Css.solid colorBorderLight
         , Css.flexWrap Css.wrap
         ]
@@ -510,14 +542,15 @@ connectionStatusStyles =
         ]
     , Css.Global.class "reconnect-button"
         [ Css.marginLeft Css.auto
-        , Css.padding2 (Css.rem 0.25) space1
+        , Css.padding2 space1 space1
         , Css.cursor Css.pointer
         , Css.border3 (Css.px 1) Css.solid colorBorder
         , Css.borderRadius (Css.px 4)
         , Css.backgroundColor colorBackground
         , Css.color colorText
         , Css.fontFamilies fontStack
-        , Css.fontSize (Css.rem 0.75)
+        , Css.fontSize (Css.rem 1)
+        , Css.lineHeight (Css.num 1.5)
         , Css.property "transition" "color 0.2s, background-color 0.2s, border-color 0.2s"
         , Css.hover
             [ Css.backgroundColor colorBackgroundSecondary
@@ -621,10 +654,14 @@ inputStyles : List Css.Global.Snippet
 inputStyles =
     [ -- Outer container with padding (like messages-content) and bottom margin
       Css.Global.class "input-container"
-        [ Css.padding space2
+        [ Css.paddingTop Css.zero
+        , Css.paddingLeft space2
+        , Css.paddingRight space2
         , Css.paddingBottom (Css.px 8)
         , mediaMedium
-            [ Css.padding space3
+            [ Css.paddingTop Css.zero
+            , Css.paddingLeft space3
+            , Css.paddingRight space3
             , Css.paddingBottom (Css.px 8)
             ]
         ]
@@ -658,6 +695,7 @@ inputStyles =
 
     -- Textarea - full width, no borders, monospace font
     -- Has bottom padding to reserve space for toolbar (always present to keep height stable)
+    -- Uses field-sizing: content to auto-grow with wrapped text
     , Css.Global.class "input-textarea"
         [ Css.width (Css.pct 100)
         , Css.property "box-sizing" "border-box"
@@ -671,6 +709,8 @@ inputStyles =
         , Css.color colorText
         , Css.backgroundColor colorBackground
         , Css.outline Css.none
+        , Css.property "field-sizing" "content"
+        , Css.minHeight (Css.rem 2.5)
         , mediaMedium
             [ Css.fontSize (Css.rem 1.1875)
             , Css.lineHeight (Css.num 1.68)
