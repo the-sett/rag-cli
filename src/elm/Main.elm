@@ -69,7 +69,7 @@ type alias Model =
     , inputFocused : Bool
     , lastEnterTime : Int
     , activeTocEntryId : Maybe String -- Currently visible TOC entry
-    , scrollListenerSetup : Bool -- Whether scroll listener has been set up
+    , tocElementPositions : List { id : String, top : Float } -- Cached element positions
     }
 
 
@@ -90,11 +90,22 @@ type alias TocEntry =
     }
 
 
-type alias ScrollData =
+{-| Scroll event data decoded from the messages container.
+-}
+type alias ScrollEvent =
     { scrollTop : Float
-    , containerHeight : Float
-    , elementPositions : List { id : String, top : Float }
+    , clientHeight : Float
     }
+
+
+{-| Decoder for scroll events on the messages container.
+-}
+scrollEventDecoder : Decode.Decoder Msg
+scrollEventDecoder =
+    Decode.map2 ScrollEvent
+        (Decode.at [ "target", "scrollTop" ] Decode.float)
+        (Decode.at [ "target", "clientHeight" ] Decode.float)
+        |> Decode.map OnScroll
 
 
 type Msg
@@ -113,7 +124,8 @@ type Msg
     | InputFocused
     | InputBlurred
     | InputKeyDown Int
-    | OnScroll ScrollData
+    | OnScroll ScrollEvent
+    | GotElementPositions (List { id : String, top : Float })
 
 
 
@@ -149,14 +161,11 @@ init flagsValue =
             , inputFocused = False
             , lastEnterTime = 0
             , activeTocEntryId = Nothing
-            , scrollListenerSetup = False
+            , tocElementPositions = []
             }
     in
     ( model
-    , Cmd.batch
-        [ wsApi.open flags.cragUrl WsOpened
-        , Ports.setupScrollListener "messages-container"
-        ]
+    , wsApi.open flags.cragUrl WsOpened
     )
 
 
@@ -225,17 +234,21 @@ update msg model =
                             -- Add user query to TOC
                             userTocEntry =
                                 generateUserTocEntry newMessageIndex model.userInput
+
+                            newTocEntriesHistory =
+                                model.tocEntriesHistory ++ [ userTocEntry ]
                         in
                         ( { model
                             | userInput = ""
                             , messages = model.messages ++ [ newMessage ]
                             , isWaitingForResponse = True
                             , streamState = ChatMarkBlock.initStreamState
-                            , tocEntriesHistory = model.tocEntriesHistory ++ [ userTocEntry ]
+                            , tocEntriesHistory = newTocEntriesHistory
                           }
                         , Cmd.batch
                             [ wsApi.send socketId queryJson WsSent
                             , scrollToEntry newMessageId
+                            , queryTocElementPositions newTocEntriesHistory
                             ]
                         )
 
@@ -276,24 +289,16 @@ update msg model =
             else
                 ( { model | lastEnterTime = currentTime }, Cmd.none )
 
-        OnScroll scrollData ->
+        OnScroll scrollEvent ->
             let
                 -- The active entry is the one whose top is above the bottom of the
                 -- top 1/3 of the container, and comes earliest among all such entries
                 thresholdY =
-                    scrollData.scrollTop + (scrollData.containerHeight / 3)
+                    scrollEvent.scrollTop + (scrollEvent.clientHeight / 3)
 
-                -- Get all TOC entry IDs
-                allTocEntries =
-                    model.tocEntriesHistory ++ model.tocEntriesStreaming
-
-                tocEntryIds =
-                    List.map .id allTocEntries
-
-                -- Filter element positions to only those in TOC, sorted by position
+                -- Use cached element positions
                 relevantPositions =
-                    scrollData.elementPositions
-                        |> List.filter (\pos -> List.member pos.id tocEntryIds)
+                    model.tocElementPositions
                         |> List.sortBy .top
 
                 -- Find entries whose top is above the threshold (visible in top 1/3)
@@ -306,6 +311,9 @@ update msg model =
                         |> Maybe.map .id
             in
             ( { model | activeTocEntryId = activeId }, Cmd.none )
+
+        GotElementPositions positions ->
+            ( { model | tocElementPositions = positions }, Cmd.none )
 
 
 {-| Scroll to a heading in the messages container.
@@ -352,6 +360,69 @@ scrollToEntry targetId =
                         )
             )
         |> Task.attempt ScrollResult
+
+
+{-| Query element positions for all TOC entries.
+This is called when TOC entries change to update the cached positions.
+Positions are calculated relative to the scroll container's content.
+-}
+queryTocElementPositions : List TocEntry -> Cmd Msg
+queryTocElementPositions entries =
+    let
+        ids =
+            List.map .id entries
+    in
+    if List.isEmpty ids then
+        Cmd.none
+
+    else
+        -- First get container info, then query all elements
+        Dom.getElement "messages-container"
+            |> Task.andThen
+                (\container ->
+                    Dom.getViewportOf "messages-container"
+                        |> Task.andThen
+                            (\viewport ->
+                                let
+                                    -- Query each element and calculate position relative to container content
+                                    queryElement id =
+                                        Dom.getElement id
+                                            |> Task.map
+                                                (\el ->
+                                                    let
+                                                        -- Position within scrollable content
+                                                        relativeTop =
+                                                            el.element.y
+                                                                - container.element.y
+                                                                + viewport.viewport.y
+                                                    in
+                                                    Just { id = id, top = relativeTop }
+                                                )
+                                            |> Task.onError (\_ -> Task.succeed Nothing)
+                                in
+                                case ids of
+                                    [] ->
+                                        Task.succeed []
+
+                                    first :: rest ->
+                                        List.foldl
+                                            (\id accTask ->
+                                                Task.map2 (\acc result -> acc ++ [ result ]) accTask (queryElement id)
+                                            )
+                                            (Task.map List.singleton (queryElement first))
+                                            rest
+                                            |> Task.map (List.filterMap identity)
+                            )
+                )
+            |> Task.attempt
+                (\result ->
+                    case result of
+                        Ok positions ->
+                            GotElementPositions positions
+
+                        Err _ ->
+                            GotElementPositions []
+                )
 
 
 {-| Simple JSON string encoder
@@ -424,7 +495,7 @@ handleServerMessage payload model =
                         , tocEntriesHistory = newTocEntriesHistory
                         , tocEntriesStreaming = []
                       }
-                    , Cmd.none
+                    , queryTocElementPositions newTocEntriesHistory
                     )
 
                 ErrorMessage errorMsg ->
@@ -534,7 +605,6 @@ subscriptions model =
         , wsApi.onMessage WsMessage
         , wsApi.onClose WsClosedAsync
         , wsApi.onError WsError
-        , Ports.onScroll OnScroll
         ]
 
 
@@ -723,6 +793,7 @@ viewMessages model =
     HS.div
         [ HA.class "messages-container"
         , HA.id "messages-container"
+        , HE.on "scroll" scrollEventDecoder
         ]
         [ HS.div
             [ HA.class "messages-content" ]
