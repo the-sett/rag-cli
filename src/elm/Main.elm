@@ -14,6 +14,7 @@ import Markdown.ChatMarkBlock as ChatMarkBlock exposing (ChatMarkBlock, StreamSt
 import Ports
 import Procedure.Program
 import Task
+import Update2 as U2
 import Websocket
 
 
@@ -181,149 +182,190 @@ update msg model =
                 |> Tuple.mapFirst (\ps -> { model | procedureState = ps })
 
         WsOpened result ->
-            case result of
-                Ok socketId ->
-                    ( { model | connectionStatus = Connected socketId }
-                    , Cmd.none
-                    )
-
-                Err _ ->
-                    ( { model | connectionStatus = Disconnected }
-                    , Cmd.none
-                    )
+            U2.pure model
+                |> U2.andThen (handleWsOpened result)
 
         WsSent _ ->
-            ( model, Cmd.none )
+            U2.pure model
 
         WsClosed _ ->
-            ( { model | connectionStatus = Disconnected }
-            , Cmd.none
-            )
+            U2.pure model
+                |> U2.andThen setDisconnected
 
         WsMessage _ payload ->
-            handleServerMessage payload model
+            U2.pure model
+                |> U2.andThen (handleServerMessage payload)
 
         WsClosedAsync _ ->
-            ( { model | connectionStatus = Disconnected }
-            , Cmd.none
-            )
+            U2.pure model
+                |> U2.andThen setDisconnected
 
         WsError _ _ ->
-            ( model, Cmd.none )
+            U2.pure model
 
         UserInputChanged input ->
-            ( { model | userInput = input }, Cmd.none )
+            U2.pure { model | userInput = input }
 
         SendMessage ->
-            case model.connectionStatus of
-                Connected socketId ->
-                    if String.trim model.userInput /= "" then
-                        let
-                            queryJson =
-                                "{\"type\":\"query\",\"content\":" ++ encodeString model.userInput ++ "}"
-
-                            newMessage =
-                                { role = "user", blocks = [ ChatMarkBlock.PendingBlock model.userInput ] }
-
-                            newMessageIndex =
-                                List.length model.messages
-
-                            newMessageId =
-                                "msg-" ++ String.fromInt newMessageIndex
-
-                            -- Add user query to TOC
-                            userTocEntry =
-                                generateUserTocEntry newMessageIndex model.userInput
-
-                            newTocEntriesHistory =
-                                model.tocEntriesHistory ++ [ userTocEntry ]
-                        in
-                        ( { model
-                            | userInput = ""
-                            , messages = model.messages ++ [ newMessage ]
-                            , isWaitingForResponse = True
-                            , streamState = ChatMarkBlock.initStreamState
-                            , tocEntriesHistory = newTocEntriesHistory
-                          }
-                        , Cmd.batch
-                            [ wsApi.send socketId queryJson WsSent
-                            , scrollToEntry newMessageId
-                            , queryTocElementPosition newMessageId
-                            ]
-                        )
-
-                    else
-                        ( model, Cmd.none )
-
-                _ ->
-                    ( model, Cmd.none )
+            U2.pure model
+                |> U2.andThen sendUserMessage
 
         Reconnect ->
-            ( { model | connectionStatus = Connecting }
-            , wsApi.open model.cragUrl WsOpened
-            )
+            U2.pure { model | connectionStatus = Connecting }
+                |> U2.andThen reconnectWebSocket
 
         ScrollToEntry targetId ->
-            ( { model | activeTocEntryId = Just targetId }, scrollToEntry targetId )
+            U2.pure { model | activeTocEntryId = Just targetId }
+                |> U2.andThen (scrollToTocEntry targetId)
 
         ScrollResult _ ->
-            -- Ignore scroll result (success or failure)
-            ( model, Cmd.none )
+            U2.pure model
 
         InputFocused ->
-            ( { model | inputFocused = True }, Cmd.none )
+            U2.pure { model | inputFocused = True }
 
         InputBlurred ->
-            ( { model | inputFocused = False }, Cmd.none )
+            U2.pure { model | inputFocused = False }
 
         InputKeyDown currentTime ->
-            -- Double-Enter detection: if Enter pressed twice within 400ms, send message
-            let
-                timeDiff =
-                    currentTime - model.lastEnterTime
-            in
-            if timeDiff < 400 && timeDiff > 0 then
-                -- Double-enter detected, trigger send
-                update SendMessage { model | lastEnterTime = 0 }
-
-            else
-                ( { model | lastEnterTime = currentTime }, Cmd.none )
+            U2.pure model
+                |> U2.andThen (handleInputKeyDown currentTime)
 
         OnScroll scrollEvent ->
-            let
-                -- The active entry is the one whose top is above the bottom of the
-                -- top 1/3 of the container, and comes earliest among all such entries
-                thresholdY =
-                    scrollEvent.scrollTop + (scrollEvent.clientHeight / 3)
-
-                -- Use cached element positions
-                relevantPositions =
-                    model.tocElementPositions
-                        |> List.sortBy .top
-
-                -- Find entries whose top is above the threshold (visible in top 1/3)
-                -- Take the last one that's above threshold (earliest in scroll order that's visible)
-                activeId =
-                    relevantPositions
-                        |> List.filter (\pos -> pos.top <= thresholdY)
-                        |> List.reverse
-                        |> List.head
-                        |> Maybe.map .id
-            in
-            ( { model | activeTocEntryId = activeId }, Cmd.none )
+            U2.pure model
+                |> U2.andThen (updateActiveTocEntry scrollEvent)
 
         GotElementPosition position ->
-            -- Add or update position in cache (ignore empty id from failed queries)
-            if String.isEmpty position.id then
-                ( model, Cmd.none )
+            U2.pure model
+                |> U2.andThen (cacheElementPosition position)
+
+
+
+-- Update Helpers
+
+
+handleWsOpened : Result Websocket.Error Websocket.SocketId -> Model -> ( Model, Cmd Msg )
+handleWsOpened result model =
+    case result of
+        Ok socketId ->
+            U2.pure { model | connectionStatus = Connected socketId }
+
+        Err _ ->
+            U2.pure { model | connectionStatus = Disconnected }
+
+
+setDisconnected : Model -> ( Model, Cmd Msg )
+setDisconnected model =
+    U2.pure { model | connectionStatus = Disconnected }
+
+
+reconnectWebSocket : Model -> ( Model, Cmd Msg )
+reconnectWebSocket model =
+    ( model, wsApi.open model.cragUrl WsOpened )
+
+
+sendUserMessage : Model -> ( Model, Cmd Msg )
+sendUserMessage model =
+    case model.connectionStatus of
+        Connected socketId ->
+            if String.trim model.userInput /= "" then
+                let
+                    queryJson =
+                        "{\"type\":\"query\",\"content\":" ++ encodeString model.userInput ++ "}"
+
+                    newMessage =
+                        { role = "user", blocks = [ ChatMarkBlock.PendingBlock model.userInput ] }
+
+                    newMessageIndex =
+                        List.length model.messages
+
+                    newMessageId =
+                        "msg-" ++ String.fromInt newMessageIndex
+
+                    userTocEntry =
+                        generateUserTocEntry newMessageIndex model.userInput
+
+                    newTocEntriesHistory =
+                        model.tocEntriesHistory ++ [ userTocEntry ]
+                in
+                ( { model
+                    | userInput = ""
+                    , messages = model.messages ++ [ newMessage ]
+                    , isWaitingForResponse = True
+                    , streamState = ChatMarkBlock.initStreamState
+                    , tocEntriesHistory = newTocEntriesHistory
+                  }
+                , Cmd.batch
+                    [ wsApi.send socketId queryJson WsSent
+                    , scrollToEntry newMessageId
+                    , queryTocElementPosition newMessageId
+                    ]
+                )
 
             else
-                let
-                    -- Remove any existing entry for this id, then add the new one
-                    filteredPositions =
-                        List.filter (\p -> p.id /= position.id) model.tocElementPositions
-                in
-                ( { model | tocElementPositions = filteredPositions ++ [ position ] }, Cmd.none )
+                U2.pure model
+
+        _ ->
+            U2.pure model
+
+
+scrollToTocEntry : String -> Model -> ( Model, Cmd Msg )
+scrollToTocEntry targetId model =
+    ( model, scrollToEntry targetId )
+
+
+handleInputKeyDown : Int -> Model -> ( Model, Cmd Msg )
+handleInputKeyDown currentTime model =
+    let
+        timeDiff =
+            currentTime - model.lastEnterTime
+    in
+    if timeDiff < 400 && timeDiff > 0 then
+        -- Double-enter detected, trigger send
+        U2.pure { model | lastEnterTime = 0 }
+            |> U2.andThen sendUserMessage
+
+    else
+        U2.pure { model | lastEnterTime = currentTime }
+
+
+updateActiveTocEntry : ScrollEvent -> Model -> ( Model, Cmd Msg )
+updateActiveTocEntry scrollEvent model =
+    let
+        -- The active entry is the one whose top is above the bottom of the
+        -- top 1/3 of the container, and comes earliest among all such entries
+        thresholdY =
+            scrollEvent.scrollTop + (scrollEvent.clientHeight / 3)
+
+        -- Use cached element positions
+        relevantPositions =
+            model.tocElementPositions
+                |> List.sortBy .top
+
+        -- Find entries whose top is above the threshold (visible in top 1/3)
+        -- Take the last one that's above threshold (earliest in scroll order that's visible)
+        activeId =
+            relevantPositions
+                |> List.filter (\pos -> pos.top <= thresholdY)
+                |> List.reverse
+                |> List.head
+                |> Maybe.map .id
+    in
+    U2.pure { model | activeTocEntryId = activeId }
+
+
+cacheElementPosition : { id : String, top : Float } -> Model -> ( Model, Cmd Msg )
+cacheElementPosition position model =
+    if String.isEmpty position.id then
+        U2.pure model
+
+    else
+        let
+            -- Remove any existing entry for this id, then add the new one
+            filteredPositions =
+                List.filter (\p -> p.id /= position.id) model.tocElementPositions
+        in
+        U2.pure { model | tocElementPositions = filteredPositions ++ [ position ] }
 
 
 {-| Scroll to a heading in the messages container.
@@ -432,93 +474,104 @@ handleServerMessage payload model =
         Ok serverMsg ->
             case serverMsg of
                 DeltaMessage content ->
-                    let
-                        newStreamState =
-                            ChatMarkBlock.feedDelta content model.streamState
-
-                        -- Build TOC entries incrementally from streaming blocks
-                        streamingMessageIndex =
-                            List.length model.messages
-
-                        newStreamingTocEntries =
-                            generateTocEntriesForBlocks streamingMessageIndex newStreamState.completedBlocks
-
-                        -- Find any new entries that weren't in the previous streaming list
-                        previousIds =
-                            List.map .id model.tocEntriesStreaming
-
-                        newEntries =
-                            List.filter (\e -> not (List.member e.id previousIds)) newStreamingTocEntries
-
-                        -- Query positions for new entries
-                        positionQueries =
-                            List.map (\e -> queryTocElementPosition e.id) newEntries
-                    in
-                    ( { model
-                        | streamState = newStreamState
-                        , tocEntriesStreaming = newStreamingTocEntries
-                      }
-                    , Cmd.batch positionQueries
-                    )
+                    U2.pure model
+                        |> U2.andThen (processStreamingDelta content)
+                        |> U2.andThen queryNewTocEntryPositions
 
                 DoneMessage ->
-                    let
-                        finalBlocks =
-                            ChatMarkBlock.finishStream model.streamState
-
-                        assistantMessage =
-                            { role = "assistant", blocks = finalBlocks }
-
-                        newMessages =
-                            model.messages ++ [ assistantMessage ]
-
-                        -- Generate final TOC entries for this message
-                        messageIndex =
-                            List.length model.messages
-
-                        finalTocEntries =
-                            generateTocEntriesForBlocks messageIndex finalBlocks
-
-                        -- Merge into history, clear streaming
-                        newTocEntriesHistory =
-                            model.tocEntriesHistory ++ finalTocEntries
-
-                        -- Query any entries that weren't already queried during streaming
-                        previousIds =
-                            List.map .id model.tocEntriesStreaming
-
-                        newEntries =
-                            List.filter (\e -> not (List.member e.id previousIds)) finalTocEntries
-
-                        positionQueries =
-                            List.map (\e -> queryTocElementPosition e.id) newEntries
-                    in
-                    ( { model
-                        | messages = newMessages
-                        , streamState = ChatMarkBlock.initStreamState
-                        , isWaitingForResponse = False
-                        , tocEntriesHistory = newTocEntriesHistory
-                        , tocEntriesStreaming = []
-                      }
-                    , Cmd.batch positionQueries
-                    )
+                    U2.pure model
+                        |> U2.andThen finalizeStreamingResponse
+                        |> U2.andThen queryNewTocEntryPositions
 
                 ErrorMessage errorMsg ->
-                    let
-                        errorChatMessage =
-                            { role = "error", blocks = [ ChatMarkBlock.ErrorBlock "" errorMsg ] }
-                    in
-                    ( { model
-                        | messages = model.messages ++ [ errorChatMessage ]
-                        , streamState = ChatMarkBlock.initStreamState
-                        , isWaitingForResponse = False
-                        , tocEntriesStreaming = []
-                      }
-                    , Cmd.none
-                    )
+                    U2.pure model
+                        |> U2.andThen (addErrorMessage errorMsg)
 
         Err _ ->
-            ( model, Cmd.none )
+            U2.pure model
+
+
+processStreamingDelta : String -> Model -> ( Model, Cmd Msg )
+processStreamingDelta content model =
+    let
+        newStreamState =
+            ChatMarkBlock.feedDelta content model.streamState
+
+        streamingMessageIndex =
+            List.length model.messages
+
+        newStreamingTocEntries =
+            generateTocEntriesForBlocks streamingMessageIndex newStreamState.completedBlocks
+    in
+    U2.pure
+        { model
+            | streamState = newStreamState
+            , tocEntriesStreaming = newStreamingTocEntries
+        }
+
+
+finalizeStreamingResponse : Model -> ( Model, Cmd Msg )
+finalizeStreamingResponse model =
+    let
+        finalBlocks =
+            ChatMarkBlock.finishStream model.streamState
+
+        assistantMessage =
+            { role = "assistant", blocks = finalBlocks }
+
+        messageIndex =
+            List.length model.messages
+
+        finalTocEntries =
+            generateTocEntriesForBlocks messageIndex finalBlocks
+
+        newTocEntriesHistory =
+            model.tocEntriesHistory ++ finalTocEntries
+    in
+    U2.pure
+        { model
+            | messages = model.messages ++ [ assistantMessage ]
+            , streamState = ChatMarkBlock.initStreamState
+            , isWaitingForResponse = False
+            , tocEntriesHistory = newTocEntriesHistory
+            , tocEntriesStreaming = []
+        }
+
+
+addErrorMessage : String -> Model -> ( Model, Cmd Msg )
+addErrorMessage errorMsg model =
+    let
+        errorChatMessage =
+            { role = "error", blocks = [ ChatMarkBlock.ErrorBlock "" errorMsg ] }
+    in
+    U2.pure
+        { model
+            | messages = model.messages ++ [ errorChatMessage ]
+            , streamState = ChatMarkBlock.initStreamState
+            , isWaitingForResponse = False
+            , tocEntriesStreaming = []
+        }
+
+
+queryNewTocEntryPositions : Model -> ( Model, Cmd Msg )
+queryNewTocEntryPositions model =
+    let
+        -- Get IDs of entries we already have positions for
+        cachedIds =
+            List.map .id model.tocElementPositions
+
+        -- Find all current TOC entries (history + streaming)
+        allCurrentEntries =
+            model.tocEntriesHistory ++ model.tocEntriesStreaming
+
+        -- Query positions for entries we don't have cached yet
+        newEntries =
+            List.filter (\e -> not (List.member e.id cachedIds)) allCurrentEntries
+
+        positionQueries =
+            List.map (\e -> queryTocElementPosition e.id) newEntries
+    in
+    ( model, Cmd.batch positionQueries )
 
 
 type ServerMessage
