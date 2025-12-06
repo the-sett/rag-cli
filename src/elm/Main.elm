@@ -125,7 +125,7 @@ type Msg
     | InputBlurred
     | InputKeyDown Int
     | OnScroll ScrollEvent
-    | GotElementPositions (List { id : String, top : Float })
+    | GotElementPosition { id : String, top : Float }
 
 
 
@@ -248,7 +248,7 @@ update msg model =
                         , Cmd.batch
                             [ wsApi.send socketId queryJson WsSent
                             , scrollToEntry newMessageId
-                            , queryTocElementPositions newTocEntriesHistory
+                            , queryTocElementPosition newMessageId
                             ]
                         )
 
@@ -312,8 +312,18 @@ update msg model =
             in
             ( { model | activeTocEntryId = activeId }, Cmd.none )
 
-        GotElementPositions positions ->
-            ( { model | tocElementPositions = positions }, Cmd.none )
+        GotElementPosition position ->
+            -- Add or update position in cache (ignore empty id from failed queries)
+            if String.isEmpty position.id then
+                ( model, Cmd.none )
+
+            else
+                let
+                    -- Remove any existing entry for this id, then add the new one
+                    filteredPositions =
+                        List.filter (\p -> p.id /= position.id) model.tocElementPositions
+                in
+                ( { model | tocElementPositions = filteredPositions ++ [ position ] }, Cmd.none )
 
 
 {-| Scroll to a heading in the messages container.
@@ -362,67 +372,41 @@ scrollToEntry targetId =
         |> Task.attempt ScrollResult
 
 
-{-| Query element positions for all TOC entries.
-This is called when TOC entries change to update the cached positions.
-Positions are calculated relative to the scroll container's content.
+{-| Query position of a single TOC element and add it to the cached positions.
+Position is calculated relative to the scroll container's content.
 -}
-queryTocElementPositions : List TocEntry -> Cmd Msg
-queryTocElementPositions entries =
-    let
-        ids =
-            List.map .id entries
-    in
-    if List.isEmpty ids then
-        Cmd.none
+queryTocElementPosition : String -> Cmd Msg
+queryTocElementPosition elementId =
+    Dom.getElement "messages-container"
+        |> Task.andThen
+            (\container ->
+                Dom.getViewportOf "messages-container"
+                    |> Task.andThen
+                        (\viewport ->
+                            Dom.getElement elementId
+                                |> Task.map
+                                    (\el ->
+                                        let
+                                            -- Position within scrollable content
+                                            relativeTop =
+                                                el.element.y
+                                                    - container.element.y
+                                                    + viewport.viewport.y
+                                        in
+                                        { id = elementId, top = relativeTop }
+                                    )
+                        )
+            )
+        |> Task.attempt
+            (\result ->
+                case result of
+                    Ok position ->
+                        GotElementPosition position
 
-    else
-        -- First get container info, then query all elements
-        Dom.getElement "messages-container"
-            |> Task.andThen
-                (\container ->
-                    Dom.getViewportOf "messages-container"
-                        |> Task.andThen
-                            (\viewport ->
-                                let
-                                    -- Query each element and calculate position relative to container content
-                                    queryElement id =
-                                        Dom.getElement id
-                                            |> Task.map
-                                                (\el ->
-                                                    let
-                                                        -- Position within scrollable content
-                                                        relativeTop =
-                                                            el.element.y
-                                                                - container.element.y
-                                                                + viewport.viewport.y
-                                                    in
-                                                    Just { id = id, top = relativeTop }
-                                                )
-                                            |> Task.onError (\_ -> Task.succeed Nothing)
-                                in
-                                case ids of
-                                    [] ->
-                                        Task.succeed []
-
-                                    first :: rest ->
-                                        List.foldl
-                                            (\id accTask ->
-                                                Task.map2 (\acc result -> acc ++ [ result ]) accTask (queryElement id)
-                                            )
-                                            (Task.map List.singleton (queryElement first))
-                                            rest
-                                            |> Task.map (List.filterMap identity)
-                            )
-                )
-            |> Task.attempt
-                (\result ->
-                    case result of
-                        Ok positions ->
-                            GotElementPositions positions
-
-                        Err _ ->
-                            GotElementPositions []
-                )
+                    Err _ ->
+                        -- Element not found, ignore
+                        GotElementPosition { id = "", top = 0 }
+            )
 
 
 {-| Simple JSON string encoder
@@ -458,12 +442,23 @@ handleServerMessage payload model =
 
                         newStreamingTocEntries =
                             generateTocEntriesForBlocks streamingMessageIndex newStreamState.completedBlocks
+
+                        -- Find any new entries that weren't in the previous streaming list
+                        previousIds =
+                            List.map .id model.tocEntriesStreaming
+
+                        newEntries =
+                            List.filter (\e -> not (List.member e.id previousIds)) newStreamingTocEntries
+
+                        -- Query positions for new entries
+                        positionQueries =
+                            List.map (\e -> queryTocElementPosition e.id) newEntries
                     in
                     ( { model
                         | streamState = newStreamState
                         , tocEntriesStreaming = newStreamingTocEntries
                       }
-                    , Cmd.none
+                    , Cmd.batch positionQueries
                     )
 
                 DoneMessage ->
@@ -487,6 +482,16 @@ handleServerMessage payload model =
                         -- Merge into history, clear streaming
                         newTocEntriesHistory =
                             model.tocEntriesHistory ++ finalTocEntries
+
+                        -- Query any entries that weren't already queried during streaming
+                        previousIds =
+                            List.map .id model.tocEntriesStreaming
+
+                        newEntries =
+                            List.filter (\e -> not (List.member e.id previousIds)) finalTocEntries
+
+                        positionQueries =
+                            List.map (\e -> queryTocElementPosition e.id) newEntries
                     in
                     ( { model
                         | messages = newMessages
@@ -495,7 +500,7 @@ handleServerMessage payload model =
                         , tocEntriesHistory = newTocEntriesHistory
                         , tocEntriesStreaming = []
                       }
-                    , queryTocElementPositions newTocEntriesHistory
+                    , Cmd.batch positionQueries
                     )
 
                 ErrorMessage errorMsg ->
