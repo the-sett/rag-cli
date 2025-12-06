@@ -485,6 +485,15 @@ mainLayoutStyles =
         [ Css.marginTop (Css.px -2)
         ]
 
+    -- Active TOC entry (current position from click or scroll)
+    , Css.Global.class "toc-entry-active"
+        [ Css.Global.children
+            [ Css.Global.class "toc-link"
+                [ Css.backgroundColor colorFocus
+                ]
+            ]
+        ]
+
     -- Content column (right 75%)
     , Css.Global.class "content-column"
         [ Css.flex (Css.int 1)

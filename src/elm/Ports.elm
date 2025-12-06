@@ -1,4 +1,4 @@
-port module Ports exposing (websocketPorts)
+port module Ports exposing (onScroll, setupScrollListener, websocketPorts)
 
 import Json.Decode exposing (Value)
 import Websocket
@@ -43,3 +43,13 @@ websocketPorts =
     , onClose = wsOnClose
     , onError = wsOnError
     }
+
+
+
+-- Ports for scroll tracking
+
+
+port setupScrollListener : String -> Cmd msg
+
+
+port onScroll : ({ scrollTop : Float, containerHeight : Float, elementPositions : List { id : String, top : Float } } -> msg) -> Sub msg

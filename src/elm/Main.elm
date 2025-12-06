@@ -68,6 +68,8 @@ type alias Model =
     , tocEntriesStreaming : List TocEntry -- From current streaming response
     , inputFocused : Bool
     , lastEnterTime : Int
+    , activeTocEntryId : Maybe String -- Currently visible TOC entry
+    , scrollListenerSetup : Bool -- Whether scroll listener has been set up
     }
 
 
@@ -88,6 +90,13 @@ type alias TocEntry =
     }
 
 
+type alias ScrollData =
+    { scrollTop : Float
+    , containerHeight : Float
+    , elementPositions : List { id : String, top : Float }
+    }
+
+
 type Msg
     = ProcedureMsg (Procedure.Program.Msg Msg)
     | WsOpened (Result Websocket.Error Websocket.SocketId)
@@ -104,6 +113,7 @@ type Msg
     | InputFocused
     | InputBlurred
     | InputKeyDown Int
+    | OnScroll ScrollData
 
 
 
@@ -138,10 +148,15 @@ init flagsValue =
             , tocEntriesStreaming = []
             , inputFocused = False
             , lastEnterTime = 0
+            , activeTocEntryId = Nothing
+            , scrollListenerSetup = False
             }
     in
     ( model
-    , wsApi.open flags.cragUrl WsOpened
+    , Cmd.batch
+        [ wsApi.open flags.cragUrl WsOpened
+        , Ports.setupScrollListener "messages-container"
+        ]
     )
 
 
@@ -236,7 +251,7 @@ update msg model =
             )
 
         ScrollToEntry targetId ->
-            ( model, scrollToEntry targetId )
+            ( { model | activeTocEntryId = Just targetId }, scrollToEntry targetId )
 
         ScrollResult _ ->
             -- Ignore scroll result (success or failure)
@@ -260,6 +275,37 @@ update msg model =
 
             else
                 ( { model | lastEnterTime = currentTime }, Cmd.none )
+
+        OnScroll scrollData ->
+            let
+                -- The active entry is the one whose top is above the bottom of the
+                -- top 1/3 of the container, and comes earliest among all such entries
+                thresholdY =
+                    scrollData.scrollTop + (scrollData.containerHeight / 3)
+
+                -- Get all TOC entry IDs
+                allTocEntries =
+                    model.tocEntriesHistory ++ model.tocEntriesStreaming
+
+                tocEntryIds =
+                    List.map .id allTocEntries
+
+                -- Filter element positions to only those in TOC, sorted by position
+                relevantPositions =
+                    scrollData.elementPositions
+                        |> List.filter (\pos -> List.member pos.id tocEntryIds)
+                        |> List.sortBy .top
+
+                -- Find entries whose top is above the threshold (visible in top 1/3)
+                -- Take the last one that's above threshold (earliest in scroll order that's visible)
+                activeId =
+                    relevantPositions
+                        |> List.filter (\pos -> pos.top <= thresholdY)
+                        |> List.reverse
+                        |> List.head
+                        |> Maybe.map .id
+            in
+            ( { model | activeTocEntryId = activeId }, Cmd.none )
 
 
 {-| Scroll to a heading in the messages container.
@@ -488,6 +534,7 @@ subscriptions model =
         , wsApi.onMessage WsMessage
         , wsApi.onClose WsClosedAsync
         , wsApi.onError WsError
+        , Ports.onScroll OnScroll
         ]
 
 
@@ -530,9 +577,15 @@ viewSidebar model =
         allTocEntries =
             model.tocEntriesHistory ++ model.tocEntriesStreaming
 
-        -- Pair each entry with whether the previous entry was a user query
-        entriesWithPrevUserFlag =
-            List.map2 Tuple.pair
+        -- Pair each entry with (prevWasUserQuery, isActive)
+        entriesWithContext =
+            List.map2
+                (\prevWasUser entry ->
+                    { prevWasUserQuery = prevWasUser
+                    , entry = entry
+                    , isActive = model.activeTocEntryId == Just entry.id
+                    }
+                )
                 (False :: List.map .isUserQuery allTocEntries)
                 allTocEntries
     in
@@ -550,7 +603,7 @@ viewSidebar model =
           else
             HS.ul
                 [ HA.class "toc-list" ]
-                (List.map viewTocEntryWithContext entriesWithPrevUserFlag)
+                (List.map viewTocEntryWithContext entriesWithContext)
         ]
 
 
@@ -589,11 +642,23 @@ viewConnectionStatus status =
         ]
 
 
+{-| Context for rendering a TOC entry.
+-}
+type alias TocEntryContext =
+    { prevWasUserQuery : Bool
+    , entry : TocEntry
+    , isActive : Bool
+    }
+
+
 {-| Render a single TOC entry with context about the previous entry.
 -}
-viewTocEntryWithContext : ( Bool, TocEntry ) -> Html Msg
-viewTocEntryWithContext ( prevWasUserQuery, entry ) =
+viewTocEntryWithContext : TocEntryContext -> Html Msg
+viewTocEntryWithContext context =
     let
+        entry =
+            context.entry
+
         entryClass =
             if entry.isUserQuery then
                 "toc-entry-user"
@@ -603,8 +668,16 @@ viewTocEntryWithContext ( prevWasUserQuery, entry ) =
 
         -- Add adjacent class if this user entry follows another user entry
         adjacentClass =
-            if entry.isUserQuery && prevWasUserQuery then
+            if entry.isUserQuery && context.prevWasUserQuery then
                 [ HA.class "toc-entry-user-adjacent" ]
+
+            else
+                []
+
+        -- Add active class if this is the currently visible entry
+        activeClass =
+            if context.isActive then
+                [ HA.class "toc-entry-active" ]
 
             else
                 []
@@ -614,6 +687,7 @@ viewTocEntryWithContext ( prevWasUserQuery, entry ) =
          , HA.class entryClass
          ]
             ++ adjacentClass
+            ++ activeClass
         )
         [ HS.button
             [ HA.class "toc-link"
