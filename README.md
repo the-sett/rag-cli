@@ -6,6 +6,7 @@ A command-line tool for building and querying a knowledge base using OpenAI's ve
 - Index documents, code, and data files with a single command
 - Interactive chat with context-aware responses from your knowledge base
 - Rich markdown rendering with syntax-highlighted code blocks and formatted tables
+- Web interface with streaming responses and table of contents navigation
 - Non-interactive mode for scripting and automation
 - Support for OpenAI's reasoning models with configurable thinking levels
 - Incremental re-indexing (only uploads changed files)
@@ -159,6 +160,37 @@ echo "What is garbage collection?" | crag -n
 
 This reads the query from stdin, outputs the response to stdout, and exits.
 
+### Web Interface
+
+crag includes a built-in web interface for a richer chat experience:
+
+```bash
+crag --server
+```
+
+This starts an HTTP server (default port 8192) and WebSocket server (port 8193) serving an embedded web application. Open `http://localhost:8192` in your browser.
+
+You can customise the server:
+
+```bash
+# Use a different port
+crag --server --port 3000
+
+# Bind to localhost only
+crag --server --address 127.0.0.1
+
+# Serve from local files during development
+crag --server --www-dir ./build/www
+```
+
+The web interface features:
+- Two-column layout with table of contents sidebar and chat area
+- Streaming markdown rendering as responses arrive
+- Incremental table of contents built from headings during streaming
+- Click-to-navigate from TOC to content
+- Scroll position tracking with current section highlighting
+- User queries shown in TOC for easy navigation
+
 ### Command-Line Options
 
 | Option | Description |
@@ -169,6 +201,10 @@ This reads the query from stdin, outputs the response to stdout, and exits.
 | `-t`, `--thinking` | Override thinking level: `l`=low, `m`=medium, `h`=high |
 | `-n`, `--non-interactive` | Read query from stdin, write response to stdout, exit |
 | `--plain` | Disable markdown rendering, output raw text |
+| `-s`, `--server` | Run in server mode with web interface |
+| `-p`, `--port` | Port for web server (default: 8192) |
+| `--address` | Bind address for web server (default: 0.0.0.0) |
+| `--www-dir` | Serve web files from directory instead of embedded resources (for development) |
 
 ### Glob Pattern Examples
 
@@ -204,7 +240,16 @@ rag-cli/
 │   ├── chat.hpp/cpp             # Chat session and logging
 │   ├── markdown_renderer.hpp/cpp # Streaming markdown rendering
 │   ├── input_editor.hpp/cpp     # Rich terminal input editing
-│   └── terminal.hpp/cpp         # Terminal settings management
+│   ├── terminal.hpp/cpp         # Terminal settings management
+│   ├── web_server.hpp/cpp       # HTTP and WebSocket servers
+│   └── elm/                     # Elm web application source
+│       ├── Main.elm             # Main application
+│       ├── Main/Style.elm       # CSS styles (Scottish Gov Design System)
+│       └── Markdown/            # Streaming markdown rendering
+├── www/
+│   ├── index.html               # Web app HTML shell
+│   ├── index.ts                 # TypeScript entry point
+│   └── websockets.ts            # WebSocket port handling
 ├── tests/
 │   └── test_markdown_renderer.cpp # Markdown renderer unit tests
 ├── CMakeLists.txt               # Build configuration
