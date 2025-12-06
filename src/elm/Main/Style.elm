@@ -402,8 +402,6 @@ mainLayoutStyles =
             ]
         , Css.focus
             [ Css.outline Css.none
-            , Css.backgroundColor colorFocus
-            , Css.color colorText
             ]
         ]
 
