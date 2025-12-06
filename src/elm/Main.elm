@@ -178,8 +178,12 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         ProcedureMsg procMsg ->
+            let
+                updateProcedureState ps =
+                    { model | procedureState = ps }
+            in
             Procedure.Program.update procMsg model.procedureState
-                |> Tuple.mapFirst (\ps -> { model | procedureState = ps })
+                |> Tuple.mapFirst updateProcedureState
 
         WsOpened result ->
             U2.pure model
@@ -337,6 +341,9 @@ updateActiveTocEntry scrollEvent model =
         thresholdY =
             scrollEvent.scrollTop + (scrollEvent.clientHeight / 3)
 
+        isAboveThreshold pos =
+            pos.top <= thresholdY
+
         -- Use cached element positions
         relevantPositions =
             model.tocElementPositions
@@ -346,7 +353,7 @@ updateActiveTocEntry scrollEvent model =
         -- Take the last one that's above threshold (earliest in scroll order that's visible)
         activeId =
             relevantPositions
-                |> List.filter (\pos -> pos.top <= thresholdY)
+                |> List.filter isAboveThreshold
                 |> List.reverse
                 |> List.head
                 |> Maybe.map .id
@@ -361,9 +368,12 @@ cacheElementPosition position model =
 
     else
         let
+            isDifferentId p =
+                p.id /= position.id
+
             -- Remove any existing entry for this id, then add the new one
             filteredPositions =
-                List.filter (\p -> p.id /= position.id) model.tocElementPositions
+                List.filter isDifferentId model.tocElementPositions
         in
         U2.pure { model | tocElementPositions = filteredPositions ++ [ position ] }
 
@@ -389,28 +399,35 @@ which is independent of the current scroll position.
 -}
 scrollToEntry : String -> Cmd Msg
 scrollToEntry targetId =
+    let
+        addContainer element container =
+            { element = element, container = container }
+
+        getContainer element =
+            Dom.getElement "messages-container"
+                |> Task.map (addContainer element)
+
+        addViewport ctx viewport =
+            { element = ctx.element, container = ctx.container, viewport = viewport }
+
+        getViewport ctx =
+            Dom.getViewportOf "messages-container"
+                |> Task.map (addViewport ctx)
+
+        setScrollPosition { element, container, viewport } =
+            let
+                targetY =
+                    element.element.y
+                        - container.element.y
+                        + viewport.viewport.y
+                        - 8
+            in
+            Dom.setViewportOf "messages-container" 0 (max 0 targetY)
+    in
     Dom.getElement targetId
-        |> Task.andThen
-            (\element ->
-                Dom.getElement "messages-container"
-                    |> Task.andThen
-                        (\container ->
-                            Dom.getViewportOf "messages-container"
-                                |> Task.andThen
-                                    (\viewport ->
-                                        let
-                                            -- Element's position within container's content
-                                            -- Subtract 8px so it sits nicely below the top edge
-                                            targetY =
-                                                element.element.y
-                                                    - container.element.y
-                                                    + viewport.viewport.y
-                                                    - 8
-                                        in
-                                        Dom.setViewportOf "messages-container" 0 (max 0 targetY)
-                                    )
-                        )
-            )
+        |> Task.andThen getContainer
+        |> Task.andThen getViewport
+        |> Task.andThen setScrollPosition
         |> Task.attempt ScrollResult
 
 
@@ -419,36 +436,43 @@ Position is calculated relative to the scroll container's content.
 -}
 queryTocElementPosition : String -> Cmd Msg
 queryTocElementPosition elementId =
-    Dom.getElement "messages-container"
-        |> Task.andThen
-            (\container ->
-                Dom.getViewportOf "messages-container"
-                    |> Task.andThen
-                        (\viewport ->
-                            Dom.getElement elementId
-                                |> Task.map
-                                    (\el ->
-                                        let
-                                            -- Position within scrollable content
-                                            relativeTop =
-                                                el.element.y
-                                                    - container.element.y
-                                                    + viewport.viewport.y
-                                        in
-                                        { id = elementId, top = relativeTop }
-                                    )
-                        )
-            )
-        |> Task.attempt
-            (\result ->
-                case result of
-                    Ok position ->
-                        GotElementPosition position
+    let
+        addViewport container viewport =
+            { container = container, viewport = viewport }
 
-                    Err _ ->
-                        -- Element not found, ignore
-                        GotElementPosition { id = "", top = 0 }
-            )
+        getViewport container =
+            Dom.getViewportOf "messages-container"
+                |> Task.map (addViewport container)
+
+        addElement ctx el =
+            { container = ctx.container, viewport = ctx.viewport, el = el }
+
+        getElement ctx =
+            Dom.getElement elementId
+                |> Task.map (addElement ctx)
+
+        calculatePosition { container, viewport, el } =
+            let
+                relativeTop =
+                    el.element.y
+                        - container.element.y
+                        + viewport.viewport.y
+            in
+            { id = elementId, top = relativeTop }
+
+        toMsg result =
+            case result of
+                Ok position ->
+                    GotElementPosition position
+
+                Err _ ->
+                    GotElementPosition { id = "", top = 0 }
+    in
+    Dom.getElement "messages-container"
+        |> Task.andThen getViewport
+        |> Task.andThen getElement
+        |> Task.map calculatePosition
+        |> Task.attempt toMsg
 
 
 {-| Simple JSON string encoder
@@ -556,20 +580,20 @@ addErrorMessage errorMsg model =
 queryNewTocEntryPositions : Model -> ( Model, Cmd Msg )
 queryNewTocEntryPositions model =
     let
-        -- Get IDs of entries we already have positions for
         cachedIds =
             List.map .id model.tocElementPositions
 
-        -- Find all current TOC entries (history + streaming)
         allCurrentEntries =
             model.tocEntriesHistory ++ model.tocEntriesStreaming
 
-        -- Query positions for entries we don't have cached yet
+        isNotCached entry =
+            not (List.member entry.id cachedIds)
+
         newEntries =
-            List.filter (\e -> not (List.member e.id cachedIds)) allCurrentEntries
+            List.filter isNotCached allCurrentEntries
 
         positionQueries =
-            List.map (\e -> queryTocElementPosition e.id) newEntries
+            List.map (.id >> queryTocElementPosition) newEntries
     in
     ( model, Cmd.batch positionQueries )
 
@@ -582,22 +606,23 @@ type ServerMessage
 
 serverMessageDecoder : Decode.Decoder ServerMessage
 serverMessageDecoder =
+    let
+        decodeByType msgType =
+            case msgType of
+                "delta" ->
+                    Decode.map DeltaMessage (Decode.field "content" Decode.string)
+
+                "done" ->
+                    Decode.succeed DoneMessage
+
+                "error" ->
+                    Decode.map ErrorMessage (Decode.field "message" Decode.string)
+
+                _ ->
+                    Decode.fail ("Unknown message type: " ++ msgType)
+    in
     Decode.field "type" Decode.string
-        |> Decode.andThen
-            (\msgType ->
-                case msgType of
-                    "delta" ->
-                        Decode.map DeltaMessage (Decode.field "content" Decode.string)
-
-                    "done" ->
-                        Decode.succeed DoneMessage
-
-                    "error" ->
-                        Decode.map ErrorMessage (Decode.field "message" Decode.string)
-
-                    _ ->
-                        Decode.fail ("Unknown message type: " ++ msgType)
-            )
+        |> Decode.andThen decodeByType
 
 
 {-| Generate TOC entries from a list of blocks at a given message index.
@@ -611,17 +636,17 @@ generateTocEntriesForBlocks messageIndex blocks =
 
         idPrefix =
             "msg-" ++ String.fromInt messageIndex
+
+        toTocEntry headingIdx heading =
+            { id = idPrefix ++ "-heading-" ++ String.fromInt headingIdx
+            , level = heading.level
+            , text = heading.text
+            , messageIndex = messageIndex
+            , isUserQuery = False
+            }
     in
     headings
-        |> List.indexedMap
-            (\headingIdx heading ->
-                { id = idPrefix ++ "-heading-" ++ String.fromInt headingIdx
-                , level = heading.level
-                , text = heading.text
-                , messageIndex = messageIndex
-                , isUserQuery = False
-                }
-            )
+        |> List.indexedMap toTocEntry
 
 
 {-| Generate a TOC entry for a user query message.
@@ -705,15 +730,14 @@ viewSidebar model =
         allTocEntries =
             model.tocEntriesHistory ++ model.tocEntriesStreaming
 
-        -- Pair each entry with (prevWasUserQuery, isActive)
+        toEntryContext prevWasUser entry =
+            { prevWasUserQuery = prevWasUser
+            , entry = entry
+            , isActive = model.activeTocEntryId == Just entry.id
+            }
+
         entriesWithContext =
-            List.map2
-                (\prevWasUser entry ->
-                    { prevWasUserQuery = prevWasUser
-                    , entry = entry
-                    , isActive = model.activeTocEntryId == Just entry.id
-                    }
-                )
+            List.map2 toEntryContext
                 (False :: List.map .isUserQuery allTocEntries)
                 allTocEntries
     in
@@ -995,26 +1019,27 @@ the newline from being added after the input is cleared.
 -}
 enterKeyDecoder : Int -> Decode.Decoder ( Msg, Bool )
 enterKeyDecoder lastEnterTime =
+    let
+        decodeIfEnter key =
+            if key == "Enter" then
+                Decode.field "timeStamp" Decode.float
+                    |> Decode.map toMsgWithPreventDefault
+
+            else
+                Decode.fail "Not Enter key"
+
+        toMsgWithPreventDefault timestamp =
+            let
+                currentTime =
+                    round timestamp
+
+                timeDiff =
+                    currentTime - lastEnterTime
+
+                isDoubleEnter =
+                    timeDiff < 400 && timeDiff > 0
+            in
+            ( InputKeyDown currentTime, isDoubleEnter )
+    in
     Decode.field "key" Decode.string
-        |> Decode.andThen
-            (\key ->
-                if key == "Enter" then
-                    Decode.field "timeStamp" Decode.float
-                        |> Decode.map
-                            (\timestamp ->
-                                let
-                                    currentTime =
-                                        round timestamp
-
-                                    timeDiff =
-                                        currentTime - lastEnterTime
-
-                                    isDoubleEnter =
-                                        timeDiff < 400 && timeDiff > 0
-                                in
-                                ( InputKeyDown currentTime, isDoubleEnter )
-                            )
-
-                else
-                    Decode.fail "Not Enter key"
-            )
+        |> Decode.andThen decodeIfEnter
