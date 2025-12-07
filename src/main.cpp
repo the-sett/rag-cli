@@ -121,7 +121,6 @@ std::string build_system_prompt() {
     return
         "You are a specialized assistant. "
         "Use ONLY the provided file knowledge when relevant. "
-        "When using nested lists in markdown, indent nested items with 4 spaces. "
         "If the files do not contain the answer, you may reason normally but clearly "
         "state that you are extrapolating.";
 }
