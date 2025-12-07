@@ -43,11 +43,11 @@ bool WebSocketServer::start(const std::string& address, int port) {
 
             if (msg->type == ix::WebSocketMessageType::Open) {
                 // Create a new chat session for this connection
-                ChatSession* session = nullptr;
+                std::shared_ptr<ChatSession> session;
                 {
                     std::lock_guard<std::mutex> lock(sessions_mutex_);
-                    sessions_[conn_id] = std::make_unique<ChatSession>(system_prompt_, log_dir_);
-                    session = sessions_[conn_id].get();
+                    sessions_[conn_id] = std::make_shared<ChatSession>(system_prompt_, log_dir_);
+                    session = sessions_[conn_id];
                 }
 
                 // Send initial prompt to introduce the AI
@@ -108,16 +108,16 @@ void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std
         }
 
         // Find the session for this connection
-        ChatSession* session = nullptr;
+        std::shared_ptr<ChatSession> session;
         {
             std::lock_guard<std::mutex> lock(sessions_mutex_);
             auto it = sessions_.find(conn_id);
             if (it == sessions_.end()) {
                 // Session should have been created on Open, but create one if missing
-                sessions_[conn_id] = std::make_unique<ChatSession>(system_prompt_, log_dir_);
+                sessions_[conn_id] = std::make_shared<ChatSession>(system_prompt_, log_dir_);
                 it = sessions_.find(conn_id);
             }
-            session = it->second.get();
+            session = it->second;
         }
 
         process_query(ws, session, content, false);
@@ -127,7 +127,7 @@ void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std
     }
 }
 
-void WebSocketServer::process_query(ix::WebSocket& ws, ChatSession* session,
+void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
                                      const std::string& content, bool hidden) {
     // Add user message to conversation
     if (hidden) {

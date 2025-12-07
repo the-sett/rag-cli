@@ -87,13 +87,13 @@ private:
 
     // Per-connection chat sessions
     std::mutex sessions_mutex_;
-    std::unordered_map<void*, std::unique_ptr<ChatSession>> sessions_;
+    std::unordered_map<void*, std::shared_ptr<ChatSession>> sessions_;
 
     // Handles an incoming message from a client
     void handle_message(void* conn_id, ix::WebSocket& ws, const std::string& message);
 
     // Processes a query and streams the response
-    void process_query(ix::WebSocket& ws, ChatSession* session,
+    void process_query(ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
                        const std::string& content, bool hidden);
 
     // Sends a JSON message to a client
