@@ -29,7 +29,8 @@ function computeCragUrl(): string {
 // Initialize Elm application with flags
 const appNode = document.getElementById("app");
 const flags = {
-  cragUrl: computeCragUrl()
+  cragUrl: computeCragUrl(),
+  locationHref: window.location.href
 };
 
 console.log("Connecting to CRAG backend at:", flags.cragUrl);

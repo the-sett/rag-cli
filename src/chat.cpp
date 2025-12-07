@@ -13,40 +13,15 @@ namespace rag {
 
 ChatSession::ChatSession() = default;
 
-ChatSession::ChatSession(const std::string& system_prompt, const std::string& log_dir) {
-    // Add system message
+ChatSession::ChatSession(const std::string& system_prompt, const std::string& log_dir)
+    : log_dir_(log_dir)
+    , system_prompt_(system_prompt)
+{
+    // Add system message to conversation
     conversation_.push_back({"system", system_prompt});
 
-    // Create log directory if it doesn't exist
-    fs::create_directories(log_dir);
-
-    // Generate timestamp for filenames
-    auto now = std::chrono::system_clock::now();
-    auto time_t_now = std::chrono::system_clock::to_time_t(now);
-    std::tm tm_now{};
-    localtime_r(&time_t_now, &tm_now);
-
-    // Generate chat ID
-    std::ostringstream id_oss;
-    id_oss << "chat_" << std::put_time(&tm_now, "%Y%m%d_%H%M%S");
-    chat_id_ = id_oss.str();
-
-    // Generate ISO 8601 timestamp
-    std::ostringstream ts_oss;
-    ts_oss << std::put_time(&tm_now, "%Y-%m-%dT%H:%M:%S");
-    created_at_ = ts_oss.str();
-
-    // Generate log file path
-    std::ostringstream log_oss;
-    log_oss << log_dir << "/" << chat_id_ << ".md";
-    log_path_ = log_oss.str();
-
-    // Generate JSON file path
-    std::ostringstream json_oss;
-    json_oss << log_dir << "/" << chat_id_ << ".json";
-    json_path_ = json_oss.str();
-
-    log_file_.open(log_path_, std::ios::out | std::ios::app);
+    // Session starts in pending state - no ID, no files yet
+    // Files will be created when first real user message is added
 }
 
 std::unique_ptr<ChatSession> ChatSession::load(const std::string& json_path,
@@ -108,7 +83,51 @@ ChatSession::~ChatSession() {
     }
 }
 
+void ChatSession::materialize() {
+    if (is_materialized()) {
+        return;  // Already materialized
+    }
+
+    // Mark where visible messages start (after any hidden intro messages)
+    visible_start_index_ = conversation_.size();
+
+    // Create log directory if it doesn't exist
+    fs::create_directories(log_dir_);
+
+    // Generate timestamp for filenames
+    auto now = std::chrono::system_clock::now();
+    auto time_t_now = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_now{};
+    localtime_r(&time_t_now, &tm_now);
+
+    // Generate chat ID
+    std::ostringstream id_oss;
+    id_oss << "chat_" << std::put_time(&tm_now, "%Y%m%d_%H%M%S");
+    chat_id_ = id_oss.str();
+
+    // Generate ISO 8601 timestamp
+    std::ostringstream ts_oss;
+    ts_oss << std::put_time(&tm_now, "%Y-%m-%dT%H:%M:%S");
+    created_at_ = ts_oss.str();
+
+    // Generate log file path
+    std::ostringstream log_oss;
+    log_oss << log_dir_ << "/" << chat_id_ << ".md";
+    log_path_ = log_oss.str();
+
+    // Generate JSON file path
+    std::ostringstream json_oss;
+    json_oss << log_dir_ << "/" << chat_id_ << ".json";
+    json_path_ = json_oss.str();
+
+    // Open log file
+    log_file_.open(log_path_, std::ios::out | std::ios::app);
+}
+
 void ChatSession::add_user_message(const std::string& content) {
+    // Materialize the chat on first real user message
+    materialize();
+
     conversation_.push_back({"user", content});
     log("user", content);
     update_title(content);
@@ -116,20 +135,32 @@ void ChatSession::add_user_message(const std::string& content) {
 }
 
 void ChatSession::add_hidden_user_message(const std::string& content) {
+    // Just add to conversation - no materialization, no logging, no saving
     conversation_.push_back({"user", content});
-    // No logging - this is a hidden prompt
-    // Still save to JSON for conversation continuity
-    save_json();
 }
 
 void ChatSession::add_assistant_message(const std::string& content) {
     conversation_.push_back({"assistant", content});
-    log("assistant", content);
-    save_json();
+
+    // Only log/save if materialized
+    if (is_materialized()) {
+        log("assistant", content);
+        save_json();
+    }
 }
 
 const std::vector<Message>& ChatSession::get_conversation() const {
     return conversation_;
+}
+
+std::vector<Message> ChatSession::get_visible_messages() const {
+    std::vector<Message> visible;
+    for (const auto& msg : conversation_) {
+        if (msg.role != "system") {
+            visible.push_back(msg);
+        }
+    }
+    return visible;
 }
 
 void ChatSession::log(const std::string& role, const std::string& text) {
@@ -156,7 +187,9 @@ void ChatSession::save_json() {
     j["openai_response_id"] = openai_response_id_;
 
     json messages = json::array();
-    for (const auto& msg : conversation_) {
+    // Only save messages from visible_start_index_ onward (skip hidden intro)
+    for (size_t i = visible_start_index_; i < conversation_.size(); ++i) {
+        const auto& msg = conversation_[i];
         // Skip system messages - they're provided fresh on load
         if (msg.role != "system") {
             messages.push_back({

@@ -7,6 +7,7 @@ module Markdown.ChatMarkBlock exposing
     , finishStream
     , getPending
     , initStreamState
+    , parseMarkdown
     , renderBlocks
     , renderBlocksWithIds
     )
@@ -59,6 +60,19 @@ initStreamState =
     { splitterState = TextChunks.init
     , completedBlocks = []
     }
+
+
+{-| Parse a complete markdown string into ChatMarkBlocks.
+    Used for loading history messages.
+-}
+parseMarkdown : String -> List ChatMarkBlock
+parseMarkdown text =
+    let
+        -- Use the streaming infrastructure to parse - feed all text then finish
+        state =
+            feedDelta text initStreamState
+    in
+    finishStream state
 
 
 {-| Feed a delta (chunk of text) into the stream.

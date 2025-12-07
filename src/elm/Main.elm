@@ -22,13 +22,15 @@ import Websocket
 
 type alias Flags =
     { cragUrl : String
+    , locationHref : String
     }
 
 
 flagsDecoder : Decode.Decoder Flags
 flagsDecoder =
-    Decode.map Flags
+    Decode.map2 Flags
         (Decode.field "cragUrl" Decode.string)
+        (Decode.field "locationHref" Decode.string)
 
 
 
@@ -99,22 +101,36 @@ init flagsValue =
     let
         flags =
             Decode.decodeValue flagsDecoder flagsValue
-                |> Result.withDefault { cragUrl = "ws://localhost:8193" }
+                |> Result.withDefault { cragUrl = "ws://localhost:8193", locationHref = "" }
+
+        -- Parse initial route from URL
+        initialRoute =
+            Navigation.locationHrefToRoute flags.locationHref
+                |> Maybe.withDefault Navigation.Intro
+
+        -- Extract chat ID if navigating directly to a chat
+        ( initialChatId, pendingInit ) =
+            case initialRoute of
+                Navigation.Chat maybeChatId ->
+                    ( maybeChatId, maybeChatId )
+
+                _ ->
+                    ( Nothing, Nothing )
 
         ( introModel, _ ) =
             Intro.init
 
         ( chatModel, _ ) =
-            Chat.init Nothing
+            Chat.init initialChatId
 
         model =
             { procedureState = Procedure.Program.init
             , cragUrl = flags.cragUrl
             , connectionStatus = Connecting
-            , route = Just Navigation.Intro
+            , route = Just initialRoute
             , intro = introModel
             , chat = chatModel
-            , pendingChatInit = Nothing
+            , pendingChatInit = pendingInit
             , sessionInitialized = False
             }
     in
@@ -339,11 +355,28 @@ handleServerMessage payload model =
                     Chat.receiveStreamDelta (chatProtocol model) content model.chat
 
                 DoneMessage maybeChatId ->
-                    Chat.receiveStreamDone (chatProtocol model) maybeChatId model.chat
+                    let
+                        ( newModel, cmds ) =
+                            Chat.receiveStreamDone (chatProtocol model) maybeChatId model.chat
+
+                        -- If we received a new chat_id for a chat that didn't have one, update the URL
+                        urlUpdateCmd =
+                            case ( model.chat.chatId, maybeChatId ) of
+                                ( Nothing, Just chatId ) ->
+                                    Navigation.pushUrl (Navigation.routeToString (Navigation.Chat (Just chatId)))
+
+                                _ ->
+                                    Cmd.none
+                    in
+                    ( newModel, Cmd.batch [ cmds, urlUpdateCmd ] )
 
                 ReadyMessage maybeChatId ->
-                    -- Session ready for existing chat - no intro message coming
-                    U2.pure model
+                    -- Session ready for existing chat - history already sent, scroll to bottom
+                    ( model, Chat.scrollToBottom ChatMsg )
+
+                HistoryMessage { role, content } ->
+                    -- Add history message to chat (for reconnecting to existing chats)
+                    Chat.receiveHistoryMessage (chatProtocol model) role content model.chat
 
                 ErrorMessage errorMsg ->
                     Chat.receiveStreamError (chatProtocol model) errorMsg model.chat
@@ -356,6 +389,7 @@ type ServerMessage
     = DeltaMessage String
     | DoneMessage (Maybe String)
     | ReadyMessage (Maybe String)
+    | HistoryMessage { role : String, content : String }
     | ErrorMessage String
 
 
@@ -374,6 +408,11 @@ serverMessageDecoder =
                 "ready" ->
                     Decode.map ReadyMessage
                         (Decode.maybe (Decode.field "chat_id" Decode.string))
+
+                "history" ->
+                    Decode.map2 (\role content -> HistoryMessage { role = role, content = content })
+                        (Decode.field "role" Decode.string)
+                        (Decode.field "content" Decode.string)
 
                 "error" ->
                     Decode.map ErrorMessage (Decode.field "message" Decode.string)

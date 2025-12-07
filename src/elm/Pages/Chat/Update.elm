@@ -4,6 +4,8 @@ module Pages.Chat.Update exposing
     , receiveStreamDelta
     , receiveStreamDone
     , receiveStreamError
+    , receiveHistoryMessage
+    , scrollToBottom
     )
 
 {-| Update logic for the Chat page.
@@ -94,6 +96,14 @@ receiveStreamDone protocol maybeChatId model =
 receiveStreamError : Protocol model msg -> String -> Model -> ( model, Cmd msg )
 receiveStreamError protocol errorMsg model =
     addErrorMessage protocol errorMsg model
+
+
+{-| Handle history message from websocket (called from Main).
+    Adds a complete message from chat history when reconnecting.
+-}
+receiveHistoryMessage : Protocol model msg -> String -> String -> Model -> ( model, Cmd msg )
+receiveHistoryMessage protocol role content model =
+    addHistoryMessage protocol role content model
 
 
 
@@ -283,6 +293,39 @@ addErrorMessage protocol errorMsg model =
         |> protocol.onUpdate
 
 
+addHistoryMessage : Protocol model msg -> String -> String -> Model -> ( model, Cmd msg )
+addHistoryMessage protocol role content model =
+    let
+        messageIndex =
+            List.length model.messages
+
+        -- Parse the content into markdown blocks
+        blocks =
+            ChatMarkBlock.parseMarkdown content
+
+        historyMessage =
+            { role = role, blocks = blocks }
+
+        -- Generate TOC entries for this message
+        tocEntries =
+            if role == "user" then
+                [ generateUserTocEntry messageIndex content ]
+
+            else
+                generateTocEntriesForBlocks messageIndex blocks
+
+        newTocEntriesHistory =
+            model.tocEntriesHistory ++ tocEntries
+
+        newModel =
+            { model
+                | messages = model.messages ++ [ historyMessage ]
+                , tocEntriesHistory = newTocEntriesHistory
+            }
+    in
+    queryNewTocEntryPositions protocol newModel
+
+
 queryNewTocEntryPositions : Protocol model msg -> Model -> ( model, Cmd msg )
 queryNewTocEntryPositions protocol model =
     let
@@ -381,6 +424,19 @@ scrollToEntry targetId =
         |> Task.andThen getContainer
         |> Task.andThen getViewport
         |> Task.andThen setScrollPosition
+        |> Task.attempt ScrollResult
+
+
+{-| Scroll the messages container to the bottom.
+    Used when loading chat history.
+-}
+scrollToBottom : Cmd Msg
+scrollToBottom =
+    Dom.getViewportOf "messages-container"
+        |> Task.andThen
+            (\viewport ->
+                Dom.setViewportOf "messages-container" 0 viewport.scene.height
+            )
         |> Task.attempt ScrollResult
 
 

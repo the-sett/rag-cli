@@ -8,6 +8,8 @@ module Pages.Chat.Component exposing
     , receiveStreamDelta
     , receiveStreamDone
     , receiveStreamError
+    , receiveHistoryMessage
+    , scrollToBottom
     )
 
 {-| Chat page component.
@@ -86,3 +88,17 @@ receiveStreamDone =
 receiveStreamError : Protocol model msg -> String -> Model -> ( model, Cmd msg )
 receiveStreamError =
     Update.receiveStreamError
+
+
+{-| Handle history message from websocket (for reconnecting to existing chats).
+-}
+receiveHistoryMessage : Protocol model msg -> String -> String -> Model -> ( model, Cmd msg )
+receiveHistoryMessage =
+    Update.receiveHistoryMessage
+
+
+{-| Scroll the chat to the bottom. Used after loading history.
+-}
+scrollToBottom : (Msg -> msg) -> Cmd msg
+scrollToBottom toMsg =
+    Update.scrollToBottom |> Cmd.map toMsg

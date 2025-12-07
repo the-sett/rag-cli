@@ -309,6 +309,11 @@ int main(int argc, char* argv[]) {
         }
 
         Settings settings = *existing;
+
+        // Validate chats - remove entries for deleted chat files
+        validate_chats(settings);
+        save_settings(settings);
+
         console.print_colored("Using model: ", ansi::GREEN);
         console.println(settings.model);
         console.print_colored("Vector store: ", ansi::GREEN);

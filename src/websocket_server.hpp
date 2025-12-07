@@ -106,6 +106,9 @@ private:
     // Sends the intro message (cached or generated)
     void send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession> session);
 
+    // Sends chat history for reconnecting to existing chat
+    void send_history(ix::WebSocket& ws, std::shared_ptr<ChatSession> session);
+
     // Processes a query and streams the response
     void process_query(ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
                        const std::string& content, bool hidden);

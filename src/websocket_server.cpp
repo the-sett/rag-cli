@@ -147,7 +147,7 @@ void WebSocketServer::handle_init(void* conn_id, ix::WebSocket& ws, const std::s
     }
 
     if (!session) {
-        // Create new session
+        // Create new session (starts in pending state - no files yet)
         session = std::make_shared<ChatSession>(system_prompt_, log_dir_);
     }
 
@@ -160,8 +160,20 @@ void WebSocketServer::handle_init(void* conn_id, ix::WebSocket& ws, const std::s
     if (chat_id.empty()) {
         send_intro(ws, session);
     } else {
-        // For existing chats, just send ready signal
+        // For existing chats, replay history then send ready
+        send_history(ws, session);
         send_json(ws, {{"type", "ready"}, {"chat_id", session->get_chat_id()}});
+    }
+}
+
+void WebSocketServer::send_history(ix::WebSocket& ws, std::shared_ptr<ChatSession> session) {
+    auto messages = session->get_visible_messages();
+    for (const auto& msg : messages) {
+        send_json(ws, {
+            {"type", "history"},
+            {"role", msg.role},
+            {"content", msg.content}
+        });
     }
 }
 
@@ -177,14 +189,11 @@ void WebSocketServer::send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession>
         // Send cached response as a single delta
         send_json(ws, {{"type", "delta"}, {"content", cached}});
 
-        // Add to session
+        // Add to session (won't save to files since not materialized)
         session->add_assistant_message(cached);
 
-        // Update settings with chat info
-        update_settings(session);
-
-        // Send done
-        send_json(ws, {{"type", "done"}, {"chat_id", session->get_chat_id()}});
+        // Send done - no chat_id since chat isn't materialized yet
+        send_json(ws, {{"type", "done"}});
     } else {
         // Generate intro and cache it
         session->add_hidden_user_message(INITIAL_PROMPT);
@@ -204,7 +213,7 @@ void WebSocketServer::send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession>
                 }
             );
 
-            // Add assistant response to conversation
+            // Add assistant response to conversation (won't save since not materialized)
             session->add_assistant_message(full_response);
 
             // Store the response ID
@@ -218,11 +227,8 @@ void WebSocketServer::send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession>
                 save_settings(*settings_);
             }
 
-            // Update settings with chat info
-            update_settings(session);
-
-            // Send done
-            send_json(ws, {{"type", "done"}, {"chat_id", session->get_chat_id()}});
+            // Send done - no chat_id since chat isn't materialized yet
+            send_json(ws, {{"type", "done"}});
 
         } catch (const std::exception& e) {
             send_json(ws, {{"type", "error"}, {"message", e.what()}});
@@ -232,11 +238,14 @@ void WebSocketServer::send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession>
 
 void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
                                      const std::string& content, bool hidden) {
+    // Track if this is the first real message (will materialize the chat)
+    bool was_pending = !session->is_materialized();
+
     // Add user message to conversation
     if (hidden) {
         session->add_hidden_user_message(content);
     } else {
-        session->add_user_message(content);
+        session->add_user_message(content);  // This materializes if pending
     }
 
     // Stream the response
@@ -263,11 +272,17 @@ void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSessi
             session->set_openai_response_id(response_id);
         }
 
-        // Update settings with chat info
-        update_settings(session);
+        // Update settings with chat info (only if materialized)
+        if (session->is_materialized()) {
+            update_settings(session);
+        }
 
-        // Send done message with chat ID
-        send_json(ws, {{"type", "done"}, {"chat_id", session->get_chat_id()}});
+        // Send done message with chat ID (will be empty if still pending)
+        nlohmann::json done_msg = {{"type", "done"}};
+        if (session->is_materialized()) {
+            done_msg["chat_id"] = session->get_chat_id();
+        }
+        send_json(ws, done_msg);
 
     } catch (const std::exception& e) {
         send_json(ws, {{"type", "error"}, {"message", e.what()}});
@@ -279,7 +294,7 @@ void WebSocketServer::send_json(ix::WebSocket& ws, const nlohmann::json& msg) {
 }
 
 void WebSocketServer::update_settings(std::shared_ptr<ChatSession> session) {
-    if (!settings_) {
+    if (!settings_ || !session->is_materialized()) {
         return;
     }
 
