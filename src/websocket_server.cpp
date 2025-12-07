@@ -62,7 +62,11 @@ bool WebSocketServer::start(const std::string& address, int port) {
                 handle_message(conn_id, webSocket, msg->str);
             }
             else if (msg->type == ix::WebSocketMessageType::Error) {
-                std::cerr << "WebSocket error: " << msg->errorInfo.reason << std::endl;
+                // Ignore "Could not parse url" errors - these are typically from
+                // non-WebSocket requests (like browser pre-flight checks)
+                if (msg->errorInfo.reason.find("Could not parse url") == std::string::npos) {
+                    std::cerr << "WebSocket error: " << msg->errorInfo.reason << std::endl;
+                }
             }
         }
     );
