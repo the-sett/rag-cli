@@ -384,6 +384,65 @@ introStyles =
             , Css.padding2 space3 space5
             ]
         ]
+
+    -- Chat list styles
+    , Css.Global.class "chat-list"
+        [ Css.marginTop space4
+        , Css.textAlign Css.left
+        , Css.width (Css.pct 100)
+        , Css.maxWidth (Css.px 500)
+        ]
+    , Css.Global.class "chat-list-loading"
+        [ Css.marginTop space3
+        , Css.color colorTextSecondary
+        , Css.fontStyle Css.italic
+        ]
+    , Css.Global.class "chat-list-empty"
+        [ Css.marginTop space3
+        , Css.color colorTextSecondary
+        , Css.fontStyle Css.italic
+        ]
+    , Css.Global.class "chat-list-title"
+        [ Css.fontSize (Css.rem 1.25)
+        , Css.fontWeight (Css.int 700)
+        , Css.color colorText
+        , Css.margin4 Css.zero Css.zero space2 Css.zero
+        , mediaMedium
+            [ Css.fontSize (Css.rem 1.5)
+            ]
+        ]
+    , Css.Global.class "chat-list-items"
+        [ Css.listStyle Css.none
+        , Css.margin Css.zero
+        , Css.padding Css.zero
+        ]
+    , Css.Global.class "chat-list-item"
+        [ Css.padding2 space2 space2
+        , Css.marginBottom space1
+        , Css.backgroundColor colorBackgroundSecondary
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBackgroundTertiary
+            ]
+        ]
+    , Css.Global.class "chat-item-title"
+        [ Css.fontSize (Css.rem 1)
+        , Css.fontWeight (Css.int 500)
+        , Css.color colorText
+        , Css.overflow Css.hidden
+        , Css.textOverflow Css.ellipsis
+        , Css.whiteSpace Css.noWrap
+        , mediaMedium
+            [ Css.fontSize (Css.rem 1.125)
+            ]
+        ]
+    , Css.Global.class "chat-item-date"
+        [ Css.fontSize (Css.rem 0.875)
+        , Css.color colorTextSecondary
+        , Css.marginTop (Css.rem 0.25)
+        ]
     ]
 
 

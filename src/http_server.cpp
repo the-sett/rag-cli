@@ -1,9 +1,12 @@
 #include "http_server.hpp"
 #include "embedded_resources.hpp"
+#include "settings.hpp"
 #include <httplib.h>
+#include <nlohmann/json.hpp>
 #include <filesystem>
 
 namespace fs = std::filesystem;
+using json = nlohmann::json;
 
 namespace rag {
 
@@ -19,6 +22,57 @@ HttpServer::~HttpServer() = default;
 bool HttpServer::start(const std::string& address, int port) {
     httplib::Server svr;
 
+    // REST API: Get chat list
+    svr.Get("/api/chats", [this](const httplib::Request&, httplib::Response& res) {
+        res.set_header("Content-Type", "application/json");
+
+        if (!settings_) {
+            res.status = 500;
+            res.set_content(R"({"error": "Settings not available"})", "application/json");
+            return;
+        }
+
+        json chats_json = json::array();
+        for (const auto& chat : settings_->chats) {
+            chats_json.push_back({
+                {"id", chat.id},
+                {"title", chat.title},
+                {"created_at", chat.created_at}
+            });
+        }
+
+        res.set_content(chats_json.dump(), "application/json");
+    });
+
+    // REST API: Get single chat info
+    svr.Get(R"(/api/chats/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Content-Type", "application/json");
+
+        if (!settings_) {
+            res.status = 500;
+            res.set_content(R"({"error": "Settings not available"})", "application/json");
+            return;
+        }
+
+        std::string chat_id = req.matches[1];
+        const ChatInfo* chat = find_chat(*settings_, chat_id);
+
+        if (!chat) {
+            res.status = 404;
+            res.set_content(R"({"error": "Chat not found"})", "application/json");
+            return;
+        }
+
+        json chat_json = {
+            {"id", chat->id},
+            {"title", chat->title},
+            {"created_at", chat->created_at},
+            {"openai_response_id", chat->openai_response_id}
+        };
+
+        res.set_content(chat_json.dump(), "application/json");
+    });
+
     if (use_embedded_) {
         // Serve from embedded resources
         if (!embedded_resources_ || !embedded_resources_->is_valid()) {
@@ -28,6 +82,11 @@ bool HttpServer::start(const std::string& address, int port) {
         // Set up handler for all GET requests
         svr.Get(".*", [this](const httplib::Request& req, httplib::Response& res) {
             std::string path = req.path;
+
+            // Skip API routes (already handled above)
+            if (path.substr(0, 5) == "/api/") {
+                return;
+            }
 
             // Handle root path
             if (path == "/") {

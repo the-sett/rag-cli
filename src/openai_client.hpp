@@ -79,11 +79,14 @@ public:
 
     // Streams a response from the model with file_search tool enabled.
     // The on_text callback is invoked for each text delta received.
-    void stream_response(
+    // If previous_response_id is provided, continues an existing conversation.
+    // Returns the new response ID for conversation continuation.
+    std::string stream_response(
         const std::string& model,
         const std::vector<Message>& conversation,
         const std::string& vector_store_id,
         const std::string& reasoning_effort,
+        const std::string& previous_response_id,
         std::function<void(const std::string&)> on_text
     );
 

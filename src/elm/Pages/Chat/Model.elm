@@ -26,6 +26,7 @@ type alias Model =
     , lastEnterTime : Int
     , activeTocEntryId : Maybe String
     , tocElementPositions : List { id : String, top : Float }
+    , chatId : Maybe String  -- Current chat ID (Nothing for new chats)
     }
 
 

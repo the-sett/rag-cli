@@ -360,11 +360,12 @@ void OpenAIClient::delete_file(const std::string& file_id) {
     }
 }
 
-void OpenAIClient::stream_response(
+std::string OpenAIClient::stream_response(
     const std::string& model,
     const std::vector<Message>& conversation,
     const std::string& vector_store_id,
     const std::string& reasoning_effort,
+    const std::string& previous_response_id,
     std::function<void(const std::string&)> on_text
 ) {
     std::string url = std::string(OPENAI_API_BASE) + "/responses";
@@ -392,7 +393,13 @@ void OpenAIClient::stream_response(
         body["reasoning"] = {{"effort", reasoning_effort}};
     }
 
-    // Track errors during streaming.
+    // Add previous_response_id for conversation continuation
+    if (!previous_response_id.empty()) {
+        body["previous_response_id"] = previous_response_id;
+    }
+
+    // Track response ID and errors during streaming.
+    std::string response_id;
     std::string stream_error;
 
     // Stream the response.
@@ -401,7 +408,12 @@ void OpenAIClient::stream_response(
             json event = json::parse(data);
             std::string event_type = event.value("type", "");
 
-            if (event_type == "response.output_text.delta") {
+            if (event_type == "response.created") {
+                // Capture the response ID when the response is created
+                if (event.contains("response") && event["response"].contains("id")) {
+                    response_id = event["response"]["id"].get<std::string>();
+                }
+            } else if (event_type == "response.output_text.delta") {
                 std::string delta = event.value("delta", "");
                 if (!delta.empty() && on_text) {
                     on_text(delta);
@@ -430,6 +442,8 @@ void OpenAIClient::stream_response(
     if (!stream_error.empty()) {
         throw std::runtime_error(stream_error);
     }
+
+    return response_id;
 }
 
 } // namespace rag

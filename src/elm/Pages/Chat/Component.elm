@@ -33,10 +33,10 @@ type alias Protocol model msg =
     Update.Protocol model msg
 
 
-{-| Initialize the Chat page model.
+{-| Initialize the Chat page model with an optional chat ID.
 -}
-init : ( Model, Cmd msg )
-init =
+init : Maybe String -> ( Model, Cmd msg )
+init chatId =
     ( { userInput = ""
       , messages = []
       , streamState = ChatMarkBlock.initStreamState
@@ -47,6 +47,7 @@ init =
       , lastEnterTime = 0
       , activeTocEntryId = Nothing
       , tocElementPositions = []
+      , chatId = chatId
       }
     , Cmd.none
     )
@@ -75,7 +76,7 @@ receiveStreamDelta =
 
 {-| Handle stream completion from websocket.
 -}
-receiveStreamDone : Protocol model msg -> Model -> ( model, Cmd msg )
+receiveStreamDone : Protocol model msg -> Maybe String -> Model -> ( model, Cmd msg )
 receiveStreamDone =
     Update.receiveStreamDone
 

@@ -15,14 +15,14 @@ import Html.Styled.Events as HE
 import Json.Decode as Decode
 import Ports
 import Url exposing (Url)
-import Url.Parser as Parser exposing (Parser)
+import Url.Parser as Parser exposing ((</>), Parser)
 
 
 {-| Application routes.
 -}
 type Route
     = Intro
-    | Chat
+    | Chat (Maybe String)  -- Optional chat ID for existing conversations
 
 
 {-| Convert a route to a URL path string.
@@ -33,8 +33,11 @@ routeToString route =
         Intro ->
             "/intro"
 
-        Chat ->
+        Chat Nothing ->
             "/chat"
+
+        Chat (Just chatId) ->
+            "/chat/" ++ chatId
 
 
 {-| Parse a location href string into a route.
@@ -52,7 +55,8 @@ routeParser =
     Parser.oneOf
         [ Parser.map Intro Parser.top
         , Parser.map Intro (Parser.s "intro")
-        , Parser.map Chat (Parser.s "chat")
+        , Parser.map (Chat Nothing) (Parser.s "chat")
+        , Parser.map (\id -> Chat (Just id)) (Parser.s "chat" </> Parser.string)
         ]
 
 

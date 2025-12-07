@@ -4,7 +4,8 @@
  * HTTP server for serving the Elm web interface.
  *
  * Serves static files either from embedded resources (compiled into
- * the executable) or from a filesystem directory.
+ * the executable) or from a filesystem directory. Also provides REST
+ * API endpoints for chat management.
  */
 
 #include <string>
@@ -14,9 +15,10 @@
 namespace rag {
 
 class EmbeddedResources;
+struct Settings;
 
 /**
- * Simple HTTP server for serving static files.
+ * Simple HTTP server for serving static files and REST API.
  */
 class HttpServer {
 public:
@@ -27,6 +29,9 @@ public:
     explicit HttpServer(const std::string& www_dir);
 
     ~HttpServer();
+
+    // Sets the settings reference for API endpoints.
+    void set_settings(Settings* settings) { settings_ = settings; }
 
     // Starts the server on the given address and port.
     // This call blocks until the server is stopped.
@@ -48,6 +53,7 @@ private:
     std::unique_ptr<EmbeddedResources> embedded_resources_;
     std::function<void(const std::string&, int)> on_start_callback_;
     bool running_ = false;
+    Settings* settings_ = nullptr;
 };
 
 } // namespace rag

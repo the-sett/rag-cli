@@ -27,6 +27,21 @@ struct FileMetadata {
 };
 
 /**
+ * Metadata for a chat session.
+ *
+ * Tracks the chat ID, log file path, OpenAI response ID for continuation,
+ * and display information.
+ */
+struct ChatInfo {
+    std::string id;                  // Unique chat ID (e.g., "chat_20241207_143022")
+    std::string log_file;            // Path to the markdown log file
+    std::string json_file;           // Path to the JSON conversation file
+    std::string openai_response_id;  // Last OpenAI response ID for continuation
+    std::string created_at;          // ISO 8601 timestamp
+    std::string title;               // First line of first user message
+};
+
+/**
  * Application settings stored in .crag.json.
  *
  * Contains model configuration, vector store reference, and metadata for
@@ -38,6 +53,8 @@ struct Settings {
     std::string vector_store_id;                          // OpenAI vector store ID.
     std::vector<std::string> file_patterns;               // Original glob patterns.
     std::map<std::string, FileMetadata> indexed_files;    // Filepath to metadata mapping.
+    std::vector<ChatInfo> chats;                          // Chat session history.
+    std::string cached_intro_message;                     // Cached AI intro message.
 
     // Returns true if settings contain required fields for operation.
     bool is_valid() const {
@@ -50,5 +67,14 @@ std::optional<Settings> load_settings();
 
 // Saves settings to .crag.json.
 void save_settings(const Settings& settings);
+
+// Validates chats by checking log files exist, removes invalid entries.
+void validate_chats(Settings& settings);
+
+// Adds or updates a chat in settings.
+void upsert_chat(Settings& settings, const ChatInfo& chat);
+
+// Finds a chat by ID. Returns nullptr if not found.
+const ChatInfo* find_chat(const Settings& settings, const std::string& chat_id);
 
 } // namespace rag

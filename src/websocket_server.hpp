@@ -22,6 +22,8 @@ class WebSocketServer;
 
 namespace rag {
 
+struct Settings;
+
 /**
  * WebSocket server that handles chat queries from web clients.
  *
@@ -56,6 +58,11 @@ public:
     ~WebSocketServer();
 
     /**
+     * Sets the settings reference for persisting chat info.
+     */
+    void set_settings(Settings* settings) { settings_ = settings; }
+
+    /**
      * Sets a callback to be invoked when the server starts listening.
      */
     void on_start(std::function<void(const std::string&, int)> callback);
@@ -81,6 +88,7 @@ private:
     std::string reasoning_effort_;
     std::string system_prompt_;
     std::string log_dir_;
+    Settings* settings_ = nullptr;
 
     std::unique_ptr<ix::WebSocketServer> server_;
     std::function<void(const std::string&, int)> on_start_callback_;
@@ -92,12 +100,21 @@ private:
     // Handles an incoming message from a client
     void handle_message(void* conn_id, ix::WebSocket& ws, const std::string& message);
 
+    // Handles session initialization (new or reconnecting)
+    void handle_init(void* conn_id, ix::WebSocket& ws, const std::string& chat_id);
+
+    // Sends the intro message (cached or generated)
+    void send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession> session);
+
     // Processes a query and streams the response
     void process_query(ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
                        const std::string& content, bool hidden);
 
     // Sends a JSON message to a client
     void send_json(ix::WebSocket& ws, const nlohmann::json& msg);
+
+    // Updates the settings with chat info
+    void update_settings(std::shared_ptr<ChatSession> session);
 };
 
 } // namespace rag

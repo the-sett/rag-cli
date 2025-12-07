@@ -341,6 +341,9 @@ int main(int argc, char* argv[]) {
             console.println("Serving web UI from directory: " + www_dir);
         }
 
+        // Pass settings to HTTP server for API endpoints
+        http_server->set_settings(&settings);
+
         // Create WebSocket server for chat.
         WebSocketServer ws_server(
             client,
@@ -350,6 +353,9 @@ int main(int argc, char* argv[]) {
             system_prompt,
             LOG_DIR
         );
+
+        // Pass settings to WebSocket server for persisting chat info
+        ws_server.set_settings(&settings);
 
         ws_server.on_start([&console](const std::string& address, int port) {
             console.print_success("WebSocket server listening on ws://" +
@@ -450,6 +456,7 @@ int main(int argc, char* argv[]) {
         }
 
         try {
+            std::string response_id;
             if (render_markdown) {
                 // Use markdown renderer for interactive mode.
                 MarkdownRenderer renderer([&](const std::string& formatted) {
@@ -457,11 +464,12 @@ int main(int argc, char* argv[]) {
                     console.flush();
                 });
 
-                client.stream_response(
+                response_id = client.stream_response(
                     settings.model,
                     chat.get_conversation(),
                     settings.vector_store_id,
                     reasoning_effort,
+                    chat.get_openai_response_id(),
                     [&](const std::string& delta) {
                         if (first_chunk.exchange(false)) {
                             // Stop spinner and clear the line before first output.
@@ -479,11 +487,12 @@ int main(int argc, char* argv[]) {
                 renderer.finish();
             } else {
                 // Raw output for non-interactive or --plain mode.
-                client.stream_response(
+                response_id = client.stream_response(
                     settings.model,
                     chat.get_conversation(),
                     settings.vector_store_id,
                     reasoning_effort,
+                    chat.get_openai_response_id(),
                     [&](const std::string& delta) {
                         if (first_chunk.exchange(false) && !non_interactive) {
                             // Stop spinner and clear the line before first output.
@@ -502,6 +511,11 @@ int main(int argc, char* argv[]) {
                         streamed_text += delta;
                     }
                 );
+            }
+
+            // Store the response ID for conversation continuation.
+            if (!response_id.empty()) {
+                chat.set_openai_response_id(response_id);
             }
         } catch (const std::exception& e) {
             // Stop spinner on error.

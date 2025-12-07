@@ -68,8 +68,8 @@ update protocol msg model =
         StreamDelta content ->
             processStreamingDelta protocol content model
 
-        StreamDone ->
-            finalizeStreamingResponse protocol model
+        StreamDone maybeChatId ->
+            finalizeStreamingResponse protocol maybeChatId model
 
         StreamError errorMsg ->
             addErrorMessage protocol errorMsg model
@@ -84,9 +84,9 @@ receiveStreamDelta protocol content model =
 
 {-| Handle stream completion from websocket (called from Main).
 -}
-receiveStreamDone : Protocol model msg -> Model -> ( model, Cmd msg )
-receiveStreamDone protocol model =
-    finalizeStreamingResponse protocol model
+receiveStreamDone : Protocol model msg -> Maybe String -> Model -> ( model, Cmd msg )
+receiveStreamDone protocol maybeChatId model =
+    finalizeStreamingResponse protocol maybeChatId model
 
 
 {-| Handle stream error from websocket (called from Main).
@@ -224,8 +224,8 @@ processStreamingDelta protocol content model =
     queryNewTocEntryPositions protocol newModel
 
 
-finalizeStreamingResponse : Protocol model msg -> Model -> ( model, Cmd msg )
-finalizeStreamingResponse protocol model =
+finalizeStreamingResponse : Protocol model msg -> Maybe String -> Model -> ( model, Cmd msg )
+finalizeStreamingResponse protocol maybeChatId model =
     let
         finalBlocks =
             ChatMarkBlock.finishStream model.streamState
@@ -242,6 +242,15 @@ finalizeStreamingResponse protocol model =
         newTocEntriesHistory =
             model.tocEntriesHistory ++ finalTocEntries
 
+        -- Update chat ID if provided by server and we don't have one yet
+        newChatId =
+            case ( model.chatId, maybeChatId ) of
+                ( Nothing, Just id ) ->
+                    Just id
+
+                ( existing, _ ) ->
+                    existing
+
         newModel =
             { model
                 | messages = model.messages ++ [ assistantMessage ]
@@ -249,6 +258,7 @@ finalizeStreamingResponse protocol model =
                 , isWaitingForResponse = False
                 , tocEntriesHistory = newTocEntriesHistory
                 , tocEntriesStreaming = []
+                , chatId = newChatId
             }
     in
     queryNewTocEntryPositions protocol newModel

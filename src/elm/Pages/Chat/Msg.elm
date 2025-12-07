@@ -20,5 +20,5 @@ type Msg
     | OnScroll ScrollEvent
     | GotElementPosition { id : String, top : Float }
     | StreamDelta String
-    | StreamDone
+    | StreamDone (Maybe String)  -- Optional chat ID from server
     | StreamError String

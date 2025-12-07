@@ -62,6 +62,8 @@ type alias Model =
     , route : Maybe Route
     , intro : Intro.Model
     , chat : Chat.Model
+    , pendingChatInit : Maybe String  -- Chat ID to send on init (Nothing = new chat, Just "" = needs init, Just id = reconnect)
+    , sessionInitialized : Bool       -- Whether we've sent an init message for current session
     }
 
 
@@ -103,7 +105,7 @@ init flagsValue =
             Intro.init
 
         ( chatModel, _ ) =
-            Chat.init
+            Chat.init Nothing
 
         model =
             { procedureState = Procedure.Program.init
@@ -112,10 +114,15 @@ init flagsValue =
             , route = Just Navigation.Intro
             , intro = introModel
             , chat = chatModel
+            , pendingChatInit = Nothing
+            , sessionInitialized = False
             }
     in
     ( model
-    , wsApi.open flags.cragUrl WsOpened
+    , Cmd.batch
+        [ wsApi.open flags.cragUrl WsOpened
+        , Intro.fetchChats IntroMsg
+        ]
     )
 
 
@@ -128,8 +135,32 @@ introProtocol model =
     { toMsg = IntroMsg
     , onUpdate = \( introModel, cmds ) -> ( { model | intro = introModel }, cmds )
     , onReady = \( introModel, cmds ) ->
-        ( { model | intro = introModel }
-        , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString Navigation.Chat) ]
+        let
+            -- Reset chat for new conversation
+            ( newChatModel, _ ) =
+                Chat.init Nothing
+        in
+        ( { model
+            | intro = introModel
+            , chat = newChatModel
+            , pendingChatInit = Just ""  -- Empty string means new chat
+            , sessionInitialized = False
+          }
+        , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString (Navigation.Chat Nothing)) ]
+        )
+    , onSelectChat = \chatId ( introModel, cmds ) ->
+        let
+            -- Initialize chat with existing chat ID
+            ( newChatModel, _ ) =
+                Chat.init (Just chatId)
+        in
+        ( { model
+            | intro = introModel
+            , chat = newChatModel
+            , pendingChatInit = Just chatId  -- Reconnect to existing chat
+            , sessionInitialized = False
+          }
+        , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString (Navigation.Chat (Just chatId))) ]
         )
     }
 
@@ -188,10 +219,10 @@ update msg model =
             U2.pure model
 
         UrlChanged route ->
-            U2.pure { model | route = route }
+            handleUrlChanged route model
 
         Reconnect ->
-            U2.pure { model | connectionStatus = Connecting }
+            U2.pure { model | connectionStatus = Connecting, sessionInitialized = False }
                 |> U2.andThen reconnectWebSocket
 
         IntroMsg introMsg ->
@@ -209,20 +240,81 @@ handleWsOpened : Result Websocket.Error Websocket.SocketId -> Model -> ( Model, 
 handleWsOpened result model =
     case result of
         Ok socketId ->
-            U2.pure { model | connectionStatus = Connected socketId }
+            let
+                newModel =
+                    { model | connectionStatus = Connected socketId }
+            in
+            -- If we have a pending chat init and we're on the chat page, send it now
+            case ( model.pendingChatInit, model.route ) of
+                ( Just chatId, Just (Navigation.Chat _) ) ->
+                    sendInitMessage socketId chatId newModel
+
+                _ ->
+                    U2.pure newModel
 
         Err _ ->
             U2.pure { model | connectionStatus = Disconnected }
 
 
+sendInitMessage : Websocket.SocketId -> String -> Model -> ( Model, Cmd Msg )
+sendInitMessage socketId chatId model =
+    let
+        initJson =
+            if String.isEmpty chatId then
+                "{\"type\":\"init\"}"
+            else
+                "{\"type\":\"init\",\"chat_id\":" ++ encodeString chatId ++ "}"
+    in
+    ( { model | sessionInitialized = True, pendingChatInit = Nothing }
+    , wsApi.send socketId initJson WsSent
+    )
+
+
 setDisconnected : Model -> ( Model, Cmd Msg )
 setDisconnected model =
-    U2.pure { model | connectionStatus = Disconnected }
+    U2.pure { model | connectionStatus = Disconnected, sessionInitialized = False }
 
 
 reconnectWebSocket : Model -> ( Model, Cmd Msg )
 reconnectWebSocket model =
     ( model, wsApi.open model.cragUrl WsOpened )
+
+
+handleUrlChanged : Maybe Route -> Model -> ( Model, Cmd Msg )
+handleUrlChanged route model =
+    let
+        baseModel =
+            { model | route = route }
+    in
+    case route of
+        Just Navigation.Intro ->
+            -- Fetch chats when navigating to Intro page
+            ( baseModel, Intro.fetchChats IntroMsg )
+
+        Just (Navigation.Chat maybeChatId) ->
+            -- When navigating to chat, send init if connected and not already initialized
+            let
+                chatId =
+                    Maybe.withDefault "" maybeChatId
+
+                modelWithPending =
+                    { baseModel
+                        | pendingChatInit = Just chatId
+                        , sessionInitialized = False
+                    }
+            in
+            case model.connectionStatus of
+                Connected socketId ->
+                    if not model.sessionInitialized then
+                        sendInitMessage socketId chatId modelWithPending
+                    else
+                        U2.pure modelWithPending
+
+                _ ->
+                    U2.pure modelWithPending
+
+        Nothing ->
+            U2.pure baseModel
 
 
 encodeString : String -> String
@@ -246,8 +338,12 @@ handleServerMessage payload model =
                 DeltaMessage content ->
                     Chat.receiveStreamDelta (chatProtocol model) content model.chat
 
-                DoneMessage ->
-                    Chat.receiveStreamDone (chatProtocol model) model.chat
+                DoneMessage maybeChatId ->
+                    Chat.receiveStreamDone (chatProtocol model) maybeChatId model.chat
+
+                ReadyMessage maybeChatId ->
+                    -- Session ready for existing chat - no intro message coming
+                    U2.pure model
 
                 ErrorMessage errorMsg ->
                     Chat.receiveStreamError (chatProtocol model) errorMsg model.chat
@@ -258,7 +354,8 @@ handleServerMessage payload model =
 
 type ServerMessage
     = DeltaMessage String
-    | DoneMessage
+    | DoneMessage (Maybe String)
+    | ReadyMessage (Maybe String)
     | ErrorMessage String
 
 
@@ -271,7 +368,12 @@ serverMessageDecoder =
                     Decode.map DeltaMessage (Decode.field "content" Decode.string)
 
                 "done" ->
-                    Decode.succeed DoneMessage
+                    Decode.map DoneMessage
+                        (Decode.maybe (Decode.field "chat_id" Decode.string))
+
+                "ready" ->
+                    Decode.map ReadyMessage
+                        (Decode.maybe (Decode.field "chat_id" Decode.string))
 
                 "error" ->
                     Decode.map ErrorMessage (Decode.field "message" Decode.string)
@@ -320,9 +422,9 @@ viewPage : Model -> Html Msg
 viewPage model =
     case model.route of
         Just Navigation.Intro ->
-            Intro.view { toMsg = IntroMsg }
+            Intro.view { toMsg = IntroMsg } model.intro
 
-        Just Navigation.Chat ->
+        Just (Navigation.Chat _) ->
             Chat.view
                 { toMsg = ChatMsg
                 , isConnected = isConnected model.connectionStatus
@@ -331,7 +433,7 @@ viewPage model =
                 model.chat
 
         Nothing ->
-            Intro.view { toMsg = IntroMsg }
+            Intro.view { toMsg = IntroMsg } model.intro
 
 
 isConnected : ConnectionStatus -> Bool
