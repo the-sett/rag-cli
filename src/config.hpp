@@ -52,6 +52,7 @@ constexpr const char* OPENAI_API_BASE = "https://api.openai.com/v1";  // OpenAI 
 
 // Hidden prompt sent at session start to get the AI to introduce itself.
 constexpr const char* INITIAL_PROMPT =
-    "Briefly introduce yourself and list the main topics covered in the indexed files.";
+    "Briefly introduce yourself and list the main topics covered in the indexed files and how"
+    "you can help the user. Keep this introduction to a maxmimum of 150 words or 8 lines.";
 
 } // namespace rag

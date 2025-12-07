@@ -3,3 +3,4 @@ build/
 chat_logs/
 .claude/
 elm-stuff/
+www/elm.js
