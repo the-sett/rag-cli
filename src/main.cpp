@@ -117,24 +117,13 @@ std::string select_reasoning_effort(Console& console) {
 
 // ========== System Prompt ==========
 
-// Builds the system prompt based on strict mode setting.
-std::string build_system_prompt(bool strict) {
-    std::string prompt =
+std::string build_system_prompt() {
+    return
         "You are a specialized assistant. "
         "Use ONLY the provided file knowledge when relevant. "
-        "When using nested lists in markdown, indent nested items with 4 spaces. ";
-
-    if (strict) {
-        prompt +=
-            "If the answer is not explicitly contained in the files, "
-            "respond with: 'The provided documents do not contain that information.'";
-    } else {
-        prompt +=
-            "If the files do not contain the answer, you may reason normally but clearly "
-            "state that you are extrapolating.";
-    }
-
-    return prompt;
+        "When using nested lists in markdown, indent nested items with 4 spaces. "
+        "If the files do not contain the answer, you may reason normally but clearly "
+        "state that you are extrapolating.";
 }
 
 // ========== Settings Management ==========
@@ -259,8 +248,6 @@ int main(int argc, char* argv[]) {
     bool reindex = false;
     app.add_flag("--reindex", reindex, "Force re-upload + reindex files");
 
-    bool strict = false;
-    app.add_flag("--strict", strict, "Only answer if info is in files");
 
 
     char thinking = '\0';
@@ -339,7 +326,7 @@ int main(int argc, char* argv[]) {
         console.print_colored("Reasoning effort: ", ansi::GREEN);
         console.println(reasoning_effort);
 
-        std::string system_prompt = build_system_prompt(strict);
+        std::string system_prompt = build_system_prompt();
 
         // Create OpenAI client.
         OpenAIClient client(api_key_env);
@@ -419,7 +406,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::string system_prompt = build_system_prompt(strict);
+    std::string system_prompt = build_system_prompt();
 
     // Create chat session.
     ChatSession chat(system_prompt, LOG_DIR);

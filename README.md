@@ -10,7 +10,6 @@ A command-line tool for building and querying a knowledge base using OpenAI's ve
 - Non-interactive mode for scripting and automation
 - Support for OpenAI's reasoning models with configurable thinking levels
 - Incremental re-indexing (only uploads changed files)
-- Strict mode to ensure answers come only from indexed content
 
 ## Prerequisites
 
@@ -197,7 +196,6 @@ The web interface features:
 |--------|-------------|
 | `FILE ...` | Files or glob patterns to index |
 | `--reindex` | Incrementally update the index (add new, update changed, remove deleted) |
-| `--strict` | Only answer if information is in the indexed files |
 | `-t`, `--thinking` | Override thinking level: `l`=low, `m`=medium, `h`=high |
 | `-n`, `--non-interactive` | Read query from stdin, write response to stdout, exit |
 | `--plain` | Disable markdown rendering, output raw text |
