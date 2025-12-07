@@ -92,6 +92,10 @@ private:
     // Handles an incoming message from a client
     void handle_message(ix::WebSocket& ws, const std::string& message);
 
+    // Processes a query and streams the response
+    void process_query(ix::WebSocket& ws, ChatSession* session,
+                       const std::string& content, bool hidden);
+
     // Sends a JSON message to a client
     void send_json(ix::WebSocket& ws, const nlohmann::json& msg);
 };

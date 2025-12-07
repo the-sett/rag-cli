@@ -678,8 +678,10 @@ messageStyles =
     , Css.Global.class "message-assistant"
         []
     , Css.Global.class "message-error"
-        [ Css.backgroundColor colorNegative
-        , Css.color colorBackground
+        [ Css.backgroundColor colorBackground
+        , Css.borderTop3 (Css.px 5) Css.solid colorNegative
+        , Css.borderBottom3 (Css.px 5) Css.solid colorNegative
+        , Css.fontFamilies fontStackMono
         ]
     , Css.Global.class "message-content"
         [ Css.margin Css.zero

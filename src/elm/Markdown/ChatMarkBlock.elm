@@ -177,9 +177,8 @@ renderChatMarkBlock block =
         PendingBlock raw ->
             renderPending raw
 
-        ErrorBlock raw _ ->
-            -- Just show as raw text, silently
-            renderPending raw
+        ErrorBlock _ errorMsg ->
+            renderError errorMsg
 
 
 {-| Render a parsed markdown block.
@@ -203,6 +202,13 @@ renderMarkdownBlock block =
 renderPending : String -> Html msg
 renderPending raw =
     HS.pre [ HA.class "md-pending" ] [ HS.text raw ]
+
+
+{-| Render error message.
+-}
+renderError : String -> Html msg
+renderError errorMsg =
+    HS.pre [ HA.class "md-error" ] [ HS.text errorMsg ]
 
 
 {-| Extract heading information from a list of ChatMarkBlocks.
@@ -282,8 +288,8 @@ renderChatMarkBlockWithId idPrefix headingIdx block =
         PendingBlock raw ->
             ( renderPending raw, headingIdx )
 
-        ErrorBlock raw _ ->
-            ( renderPending raw, headingIdx )
+        ErrorBlock _ errorMsg ->
+            ( renderError errorMsg, headingIdx )
 
 
 {-| Render a parsed markdown block with a specific ID.

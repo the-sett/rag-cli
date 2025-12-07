@@ -414,9 +414,13 @@ int main(int argc, char* argv[]) {
     // Markdown rendering: enabled for interactive mode without --plain.
     bool render_markdown = !non_interactive && !plain_output;
 
-    // Process a single query.
-    auto process_query = [&](const std::string& user_input) {
-        chat.add_user_message(user_input);
+    // Process a single query. If hidden is true, the user message won't be logged.
+    auto process_query = [&](const std::string& user_input, bool hidden = false) {
+        if (hidden) {
+            chat.add_hidden_user_message(user_input);
+        } else {
+            chat.add_user_message(user_input);
+        }
 
         std::string streamed_text;
         std::atomic<bool> first_chunk{true};
@@ -555,6 +559,12 @@ int main(int argc, char* argv[]) {
     // Interactive chat loop.
     console.println();
     console.print_header("=== RAG CLI Ready ===");
+    console.println();
+
+    // Send initial prompt to get the AI to introduce itself.
+    process_query(INITIAL_PROMPT, true);
+    console.println();
+    console.println();
     console.println("Type 'quit' to exit. Press Enter twice quickly to submit.");
     console.println();
 

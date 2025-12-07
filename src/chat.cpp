@@ -42,6 +42,11 @@ void ChatSession::add_user_message(const std::string& content) {
     log("user", content);
 }
 
+void ChatSession::add_hidden_user_message(const std::string& content) {
+    conversation_.push_back({"user", content});
+    // No logging - this is a hidden prompt
+}
+
 void ChatSession::add_assistant_message(const std::string& content) {
     conversation_.push_back({"assistant", content});
     log("assistant", content);

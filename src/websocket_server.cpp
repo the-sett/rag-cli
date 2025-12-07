@@ -1,4 +1,5 @@
 #include "websocket_server.hpp"
+#include "config.hpp"
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -42,8 +43,15 @@ bool WebSocketServer::start(const std::string& address, int port) {
 
             if (msg->type == ix::WebSocketMessageType::Open) {
                 // Create a new chat session for this connection
-                std::lock_guard<std::mutex> lock(sessions_mutex_);
-                sessions_[conn_id] = std::make_unique<ChatSession>(system_prompt_, log_dir_);
+                ChatSession* session = nullptr;
+                {
+                    std::lock_guard<std::mutex> lock(sessions_mutex_);
+                    sessions_[conn_id] = std::make_unique<ChatSession>(system_prompt_, log_dir_);
+                    session = sessions_[conn_id].get();
+                }
+
+                // Send initial prompt to introduce the AI
+                process_query(webSocket, session, INITIAL_PROMPT, true);
             }
             else if (msg->type == ix::WebSocketMessageType::Close) {
                 // Clean up the session
@@ -115,36 +123,45 @@ void WebSocketServer::handle_message(ix::WebSocket& ws, const std::string& messa
             session = it->second.get();
         }
 
-        // Add user message to conversation
-        session->add_user_message(content);
-
-        // Stream the response
-        std::string full_response;
-
-        try {
-            client_.stream_response(
-                model_,
-                session->get_conversation(),
-                vector_store_id_,
-                reasoning_effort_,
-                [this, &ws, &full_response](const std::string& delta) {
-                    full_response += delta;
-                    send_json(ws, {{"type", "delta"}, {"content", delta}});
-                }
-            );
-
-            // Add assistant response to conversation
-            session->add_assistant_message(full_response);
-
-            // Send done message
-            send_json(ws, {{"type", "done"}});
-
-        } catch (const std::exception& e) {
-            send_json(ws, {{"type", "error"}, {"message", e.what()}});
-        }
+        process_query(ws, session, content, false);
 
     } catch (const nlohmann::json::exception& e) {
         send_json(ws, {{"type", "error"}, {"message", "Invalid JSON"}});
+    }
+}
+
+void WebSocketServer::process_query(ix::WebSocket& ws, ChatSession* session,
+                                     const std::string& content, bool hidden) {
+    // Add user message to conversation
+    if (hidden) {
+        session->add_hidden_user_message(content);
+    } else {
+        session->add_user_message(content);
+    }
+
+    // Stream the response
+    std::string full_response;
+
+    try {
+        client_.stream_response(
+            model_,
+            session->get_conversation(),
+            vector_store_id_,
+            reasoning_effort_,
+            [this, &ws, &full_response](const std::string& delta) {
+                full_response += delta;
+                send_json(ws, {{"type", "delta"}, {"content", delta}});
+            }
+        );
+
+        // Add assistant response to conversation
+        session->add_assistant_message(full_response);
+
+        // Send done message
+        send_json(ws, {{"type", "done"}});
+
+    } catch (const std::exception& e) {
+        send_json(ws, {{"type", "error"}, {"message", e.what()}});
     }
 }
 

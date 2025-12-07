@@ -48,4 +48,10 @@ inline const std::unordered_set<std::string> SUPPORTED_EXTENSIONS = {
 
 constexpr const char* OPENAI_API_BASE = "https://api.openai.com/v1";  // OpenAI API base URL.
 
+// ========== Initial Prompt ==========
+
+// Hidden prompt sent at session start to get the AI to introduce itself.
+constexpr const char* INITIAL_PROMPT =
+    "Briefly introduce yourself and list the main topics covered in the indexed files.";
+
 } // namespace rag

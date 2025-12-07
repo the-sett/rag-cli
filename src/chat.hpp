@@ -31,6 +31,10 @@ public:
     // Adds a user message to the conversation.
     void add_user_message(const std::string& content);
 
+    // Adds a user message to the conversation without logging it.
+    // Used for hidden prompts like the initial greeting.
+    void add_hidden_user_message(const std::string& content);
+
     // Adds an assistant message to the conversation.
     void add_assistant_message(const std::string& content);
 
