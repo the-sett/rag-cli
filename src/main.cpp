@@ -115,6 +115,28 @@ std::string select_reasoning_effort(Console& console) {
     }
 }
 
+// ========== System Prompt ==========
+
+// Builds the system prompt based on strict mode setting.
+std::string build_system_prompt(bool strict) {
+    std::string prompt =
+        "You are a specialized assistant. "
+        "Use ONLY the provided file knowledge when relevant. "
+        "When using nested lists in markdown, indent nested items with 4 spaces. ";
+
+    if (strict) {
+        prompt +=
+            "If the answer is not explicitly contained in the files, "
+            "respond with: 'The provided documents do not contain that information.'";
+    } else {
+        prompt +=
+            "If the files do not contain the answer, you may reason normally but clearly "
+            "state that you are extrapolating.";
+    }
+
+    return prompt;
+}
+
 // ========== Settings Management ==========
 
 // Loads existing settings or creates new ones through interactive setup.
@@ -317,21 +339,7 @@ int main(int argc, char* argv[]) {
         console.print_colored("Reasoning effort: ", ansi::GREEN);
         console.println(reasoning_effort);
 
-        // Build system prompt.
-        std::string system_prompt =
-            "You are a specialized assistant. "
-            "Use ONLY the provided file knowledge when relevant. "
-            "When using nested lists in markdown, indent nested items with 4 spaces. ";
-
-        if (strict) {
-            system_prompt +=
-                "If the answer is not explicitly contained in the files, "
-                "respond with: 'The provided documents do not contain that information.'";
-        } else {
-            system_prompt +=
-                "If the files do not contain the answer, you may reason normally but clearly "
-                "state that you are extrapolating.";
-        }
+        std::string system_prompt = build_system_prompt(strict);
 
         // Create OpenAI client.
         OpenAIClient client(api_key_env);
@@ -411,21 +419,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Build system prompt.
-    std::string system_prompt =
-        "You are a specialized assistant. "
-        "Use ONLY the provided file knowledge when relevant. "
-        "When using nested lists in markdown, indent nested items with 4 spaces. ";
-
-    if (strict) {
-        system_prompt +=
-            "If the answer is not explicitly contained in the files, "
-            "respond with: 'The provided documents do not contain that information.'";
-    } else {
-        system_prompt +=
-            "If the files do not contain the answer, you may reason normally but clearly "
-            "state that you are extrapolating.";
-    }
+    std::string system_prompt = build_system_prompt(strict);
 
     // Create chat session.
     ChatSession chat(system_prompt, LOG_DIR);
