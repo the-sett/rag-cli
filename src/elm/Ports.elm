@@ -1,7 +1,17 @@
-port module Ports exposing (websocketPorts)
+port module Ports exposing (websocketPorts, pushUrl, onUrlChange)
 
 import Json.Decode exposing (Value)
 import Websocket
+
+
+
+-- Ports for Navigation
+
+
+port pushUrl : String -> Cmd msg
+
+
+port onUrlChange : (String -> msg) -> Sub msg
 
 
 

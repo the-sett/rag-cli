@@ -1,0 +1,77 @@
+module Navigation exposing
+    ( Route(..)
+    , routeToString
+    , locationHrefToRoute
+    , pushUrl
+    , onUrlChange
+    , click
+    )
+
+{-| URL-based routing for the application.
+-}
+
+import Html.Styled as HS exposing (Attribute)
+import Html.Styled.Events as HE
+import Json.Decode as Decode
+import Ports
+import Url exposing (Url)
+import Url.Parser as Parser exposing (Parser)
+
+
+{-| Application routes.
+-}
+type Route
+    = Intro
+    | Chat
+
+
+{-| Convert a route to a URL path string.
+-}
+routeToString : Route -> String
+routeToString route =
+    case route of
+        Intro ->
+            "/intro"
+
+        Chat ->
+            "/chat"
+
+
+{-| Parse a location href string into a route.
+-}
+locationHrefToRoute : String -> Maybe Route
+locationHrefToRoute href =
+    Url.fromString href
+        |> Maybe.andThen (Parser.parse routeParser)
+
+
+{-| URL parser for routes.
+-}
+routeParser : Parser (Route -> a) a
+routeParser =
+    Parser.oneOf
+        [ Parser.map Intro Parser.top
+        , Parser.map Intro (Parser.s "intro")
+        , Parser.map Chat (Parser.s "chat")
+        ]
+
+
+{-| Push a new URL to the browser history.
+-}
+pushUrl : String -> Cmd msg
+pushUrl =
+    Ports.pushUrl
+
+
+{-| Subscribe to URL changes.
+-}
+onUrlChange : (String -> msg) -> Sub msg
+onUrlChange =
+    Ports.onUrlChange
+
+
+{-| Click handler that prevents default and triggers navigation.
+-}
+click : msg -> Attribute msg
+click msg =
+    HE.preventDefaultOn "click" (Decode.succeed ( msg, True ))

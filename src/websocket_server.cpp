@@ -59,7 +59,7 @@ bool WebSocketServer::start(const std::string& address, int port) {
                 sessions_.erase(conn_id);
             }
             else if (msg->type == ix::WebSocketMessageType::Message) {
-                handle_message(webSocket, msg->str);
+                handle_message(conn_id, webSocket, msg->str);
             }
             else if (msg->type == ix::WebSocketMessageType::Error) {
                 std::cerr << "WebSocket error: " << msg->errorInfo.reason << std::endl;
@@ -91,7 +91,7 @@ void WebSocketServer::stop() {
     sessions_.clear();
 }
 
-void WebSocketServer::handle_message(ix::WebSocket& ws, const std::string& message) {
+void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std::string& message) {
     try {
         auto json = nlohmann::json::parse(message);
 
@@ -111,12 +111,9 @@ void WebSocketServer::handle_message(ix::WebSocket& ws, const std::string& messa
         ChatSession* session = nullptr;
         {
             std::lock_guard<std::mutex> lock(sessions_mutex_);
-            // Use the WebSocket's underlying connection as key
-            // Since we can't easily get the connection state here, we'll use a simpler approach
-            // For now, we'll create a session if needed
-            void* conn_id = &ws;
             auto it = sessions_.find(conn_id);
             if (it == sessions_.end()) {
+                // Session should have been created on Open, but create one if missing
                 sessions_[conn_id] = std::make_unique<ChatSession>(system_prompt_, log_dir_);
                 it = sessions_.find(conn_id);
             }

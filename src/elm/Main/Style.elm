@@ -23,6 +23,7 @@ style =
         [ globalStyles
         , scrollbarStyles
         , appContainerStyles
+        , introStyles
         , mainLayoutStyles
         , headerStyles
         , connectionStatusStyles
@@ -325,6 +326,63 @@ appContainerStyles =
         , Css.flexDirection Css.column
         , Css.boxSizing Css.borderBox
         , Css.overflow Css.hidden
+        ]
+    ]
+
+
+
+-- =============================================================================
+-- Intro Page Styles
+-- =============================================================================
+
+
+introStyles : List Css.Global.Snippet
+introStyles =
+    [ Css.Global.class "intro-page"
+        [ Css.displayFlex
+        , Css.flex (Css.int 1)
+        , Css.alignItems Css.center
+        , Css.justifyContent Css.center
+        , Css.backgroundColor colorBackground
+        ]
+    , Css.Global.class "intro-content"
+        [ Css.textAlign Css.center
+        , Css.padding space4
+        ]
+    , Css.Global.class "intro-title"
+        [ Css.fontSize (Css.rem 3)
+        , Css.fontWeight (Css.int 700)
+        , Css.color colorText
+        , Css.margin4 Css.zero Css.zero space2 Css.zero
+        , mediaMedium
+            [ Css.fontSize (Css.rem 4)
+            ]
+        ]
+    , Css.Global.class "intro-subtitle"
+        [ Css.fontSize (Css.rem 1.25)
+        , Css.color colorTextSecondary
+        , Css.margin4 Css.zero Css.zero space4 Css.zero
+        , mediaMedium
+            [ Css.fontSize (Css.rem 1.5)
+            ]
+        ]
+    , Css.Global.class "intro-ready-button"
+        [ Css.padding2 space2 space4
+        , Css.fontSize (Css.rem 1.25)
+        , Css.fontWeight (Css.int 700)
+        , Css.color colorBackground
+        , Css.backgroundColor colorBrand
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBrandHover
+            ]
+        , mediaMedium
+            [ Css.fontSize (Css.rem 1.5)
+            , Css.padding2 space3 space5
+            ]
         ]
     ]
 
@@ -1071,8 +1129,14 @@ markdownStyles =
         [ Css.fontFamilies fontStackMono
         , Css.margin Css.zero
         , Css.padding Css.zero
-        , Css.color colorNegative
-        , Css.fontSize (Css.rem 0.875)
+        , Css.whiteSpace Css.preWrap
+        , Css.color colorText
+        , Css.fontSize (Css.rem 1)
+        , Css.lineHeight (Css.num 1.5)
+        , mediaMedium
+            [ Css.fontSize (Css.rem 1.1875)
+            , Css.lineHeight (Css.num 1.68)
+            ]
         ]
     ]
 

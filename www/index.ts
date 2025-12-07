@@ -1,3 +1,4 @@
+import { NavigationPorts } from "./navigation";
 import { WebsocketPorts } from "./websockets";
 
 // Type declarations for Elm application
@@ -35,5 +36,6 @@ console.log("Connecting to CRAG backend at:", flags.cragUrl);
 
 const app = Elm.Main.init({ node: appNode, flags: flags });
 
-// Initialize WebSocket ports
+// Initialize ports
+new NavigationPorts(app);
 new WebsocketPorts(app);

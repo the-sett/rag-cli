@@ -90,7 +90,7 @@ private:
     std::unordered_map<void*, std::unique_ptr<ChatSession>> sessions_;
 
     // Handles an incoming message from a client
-    void handle_message(ix::WebSocket& ws, const std::string& message);
+    void handle_message(void* conn_id, ix::WebSocket& ws, const std::string& message);
 
     // Processes a query and streams the response
     void process_query(ix::WebSocket& ws, ChatSession* session,
