@@ -43,8 +43,19 @@ bool HttpServer::start(const std::string& address, int port) {
                     mime_type
                 );
             } else {
-                res.status = 404;
-                res.set_content("Not Found", "text/plain");
+                // For client-side routing (SPA), serve index.html for unknown paths
+                // This allows the Elm app to handle routes like /chat, /intro, etc.
+                auto index_content = embedded_resources_->get_file("/index.html");
+                if (index_content) {
+                    res.set_content(
+                        reinterpret_cast<const char*>(index_content->data()),
+                        index_content->size(),
+                        "text/html"
+                    );
+                } else {
+                    res.status = 404;
+                    res.set_content("Not Found", "text/plain");
+                }
             }
         });
     } else {
