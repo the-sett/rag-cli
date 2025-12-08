@@ -686,6 +686,22 @@ connectionStatusStyles =
     , Css.Global.class "status-connected"
         [ Css.backgroundColor colorPositive
         ]
+    , Css.Global.class "home-button"
+        [ Css.padding2 Css.zero (Css.px 6)
+        , Css.cursor Css.pointer
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.backgroundColor Css.transparent
+        , Css.color colorTextSecondary
+        , Css.fontFamilies fontStack
+        , Css.fontSize (Css.rem 1.25)
+        , Css.lineHeight (Css.num 1)
+        , Css.property "transition" "color 0.2s, background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBackgroundSecondary
+            , Css.color colorText
+            ]
+        ]
     , Css.Global.class "reconnect-button"
         [ Css.marginLeft Css.auto
         , Css.padding2 space1 space1
@@ -1216,6 +1232,14 @@ focusStyles =
 
     -- Send button focus
     , Css.Global.selector ".send-button:focus"
+        [ Css.outline3 (Css.rem 0.125) Css.solid colorFocus
+        , Css.outlineOffset (Css.px 2)
+        , Css.backgroundColor colorFocus
+        , Css.color colorText
+        ]
+
+    -- Home button focus
+    , Css.Global.selector ".home-button:focus"
         [ Css.outline3 (Css.rem 0.125) Css.solid colorFocus
         , Css.outlineOffset (Css.px 2)
         , Css.backgroundColor colorFocus

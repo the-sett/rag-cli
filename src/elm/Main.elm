@@ -79,6 +79,7 @@ type Msg
     | WsError Websocket.SocketId String
     | UrlChanged (Maybe Route)
     | Reconnect
+    | GoHome
     | IntroMsg Intro.Msg
     | ChatMsg Chat.Msg
 
@@ -240,6 +241,9 @@ update msg model =
         Reconnect ->
             U2.pure { model | connectionStatus = Connecting, sessionInitialized = False }
                 |> U2.andThen reconnectWebSocket
+
+        GoHome ->
+            ( model, Navigation.pushUrl (Navigation.routeToString Navigation.Intro) )
 
         IntroMsg introMsg ->
             Intro.update (introProtocol model) introMsg model.intro
@@ -468,6 +472,7 @@ viewPage model =
                 { toMsg = ChatMsg
                 , isConnected = isConnected model.connectionStatus
                 , onReconnect = Reconnect
+                , onGoHome = GoHome
                 }
                 model.chat
 

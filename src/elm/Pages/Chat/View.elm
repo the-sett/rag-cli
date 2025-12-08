@@ -18,6 +18,7 @@ type alias Actions msg =
     { toMsg : Msg -> msg
     , isConnected : Bool
     , onReconnect : msg
+    , onGoHome : msg
     }
 
 
@@ -87,7 +88,13 @@ viewConnectionStatus actions =
     in
     HS.div
         [ HA.class "connection-status" ]
-        [ HS.div
+        [ HS.button
+            [ HA.class "home-button"
+            , HE.onClick actions.onGoHome
+            , HA.title "Back to Home"
+            ]
+            [ HS.text "\u{2302}" ]  -- Unicode house symbol
+        , HS.div
             [ HA.class "status-indicator"
             , HA.class statusClass
             ]
