@@ -1,5 +1,6 @@
 #include "openai_client.hpp"
 #include "config.hpp"
+#include "verbose.hpp"
 #include <curl/curl.h>
 #include <stdexcept>
 #include <algorithm>
@@ -63,8 +64,11 @@ OpenAIClient::~OpenAIClient() {
 }
 
 std::string OpenAIClient::http_get(const std::string& url) {
+    verbose_out("CURL", "GET " + url);
+
     CURL* curl = curl_easy_init();
     if (!curl) {
+        verbose_err("CURL", "Failed to initialize CURL");
         throw std::runtime_error("Failed to initialize CURL");
     }
 
@@ -78,26 +82,40 @@ std::string OpenAIClient::http_get(const std::string& url) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
+    // Enable verbose CURL output in verbose mode
+    if (is_verbose()) {
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    }
+
     CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
+        verbose_err("CURL", std::string("GET failed: ") + curl_easy_strerror(res));
         throw std::runtime_error(std::string("HTTP GET failed: ") + curl_easy_strerror(res));
     }
 
+    verbose_in("CURL", "HTTP " + std::to_string(http_code) + " - " + truncate(response, 500));
     return response;
 }
 
 std::string OpenAIClient::http_post_json(const std::string& url, const json& body) {
+    std::string body_str = body.dump();
+    verbose_out("CURL", "POST " + url);
+    verbose_out("CURL", "Body: " + format_json_compact(body_str));
+
     CURL* curl = curl_easy_init();
     if (!curl) {
+        verbose_err("CURL", "Failed to initialize CURL");
         throw std::runtime_error("Failed to initialize CURL");
     }
 
     std::string response;
-    std::string body_str = body.dump();
 
     struct curl_slist* headers = nullptr;
     std::string auth_header = "Authorization: Bearer " + api_key_;
@@ -110,15 +128,24 @@ std::string OpenAIClient::http_post_json(const std::string& url, const json& bod
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
+    if (is_verbose()) {
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    }
+
     CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
+        verbose_err("CURL", std::string("POST failed: ") + curl_easy_strerror(res));
         throw std::runtime_error(std::string("HTTP POST failed: ") + curl_easy_strerror(res));
     }
 
+    verbose_in("CURL", "HTTP " + std::to_string(http_code) + " - " + truncate(response, 500));
     return response;
 }
 
@@ -126,8 +153,12 @@ std::string OpenAIClient::http_post_multipart(const std::string& url,
                                                const std::string& filepath,
                                                const std::string& purpose,
                                                const std::string& display_filename) {
+    verbose_out("CURL", "POST (multipart) " + url);
+    verbose_out("CURL", "File: " + filepath + " purpose: " + purpose);
+
     CURL* curl = curl_easy_init();
     if (!curl) {
+        verbose_err("CURL", "Failed to initialize CURL");
         throw std::runtime_error("Failed to initialize CURL");
     }
 
@@ -160,28 +191,41 @@ std::string OpenAIClient::http_post_multipart(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
+    if (is_verbose()) {
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    }
+
     CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
     curl_mime_free(mime);
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
+        verbose_err("CURL", std::string("POST multipart failed: ") + curl_easy_strerror(res));
         throw std::runtime_error(std::string("HTTP POST multipart failed: ") + curl_easy_strerror(res));
     }
 
+    verbose_in("CURL", "HTTP " + std::to_string(http_code) + " - " + truncate(response, 500));
     return response;
 }
 
 void OpenAIClient::http_post_stream(const std::string& url,
                                      const json& body,
                                      std::function<void(const std::string&)> on_data) {
+    std::string body_str = body.dump();
+    verbose_out("CURL", "POST (stream) " + url);
+    verbose_out("CURL", "Body: " + format_json_compact(body_str, 1000));
+
     CURL* curl = curl_easy_init();
     if (!curl) {
+        verbose_err("CURL", "Failed to initialize CURL");
         throw std::runtime_error("Failed to initialize CURL");
     }
 
-    std::string body_str = body.dump();
     StreamContext ctx{on_data, ""};
 
     struct curl_slist* headers = nullptr;
@@ -196,14 +240,25 @@ void OpenAIClient::http_post_stream(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
 
+    if (is_verbose()) {
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    }
+
+    verbose_log("CURL", "Starting streaming request...");
     CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
+        verbose_err("CURL", std::string("Streaming POST failed: ") + curl_easy_strerror(res));
         throw std::runtime_error(std::string("HTTP streaming POST failed: ") + curl_easy_strerror(res));
     }
+
+    verbose_in("CURL", "Stream complete, HTTP " + std::to_string(http_code));
 }
 
 std::vector<std::string> OpenAIClient::list_models() {
@@ -296,8 +351,11 @@ std::string OpenAIClient::get_batch_status(const std::string& vector_store_id,
 }
 
 std::string OpenAIClient::http_delete(const std::string& url) {
+    verbose_out("CURL", "DELETE " + url);
+
     CURL* curl = curl_easy_init();
     if (!curl) {
+        verbose_err("CURL", "Failed to initialize CURL");
         throw std::runtime_error("Failed to initialize CURL");
     }
 
@@ -312,15 +370,24 @@ std::string OpenAIClient::http_delete(const std::string& url) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
 
+    if (is_verbose()) {
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    }
+
     CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
 
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
     if (res != CURLE_OK) {
+        verbose_err("CURL", std::string("DELETE failed: ") + curl_easy_strerror(res));
         throw std::runtime_error(std::string("HTTP DELETE failed: ") + curl_easy_strerror(res));
     }
 
+    verbose_in("CURL", "HTTP " + std::to_string(http_code) + " - " + truncate(response, 500));
     return response;
 }
 

@@ -10,6 +10,7 @@
 #include "terminal.hpp"
 #include "http_server.hpp"
 #include "websocket_server.hpp"
+#include "verbose.hpp"
 
 #include <CLI/CLI.hpp>
 #include <iostream>
@@ -278,7 +279,14 @@ int main(int argc, char* argv[]) {
     app.add_option("--www-dir", www_dir,
                    "Serve web files from directory instead of embedded resources (for development)");
 
+    bool verbose = false;
+    app.add_flag("-v,--verbose", verbose,
+                 "Enable verbose output showing API calls, WebSocket messages, and HTTP requests");
+
     CLI11_PARSE(app, argc, argv);
+
+    // Enable verbose mode globally
+    set_verbose(verbose);
 
     // Save terminal settings before any raw mode changes.
     terminal::save_original_settings();

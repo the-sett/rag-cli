@@ -1,6 +1,7 @@
 #include "websocket_server.hpp"
 #include "settings.hpp"
 #include "config.hpp"
+#include "verbose.hpp"
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -43,20 +44,24 @@ bool WebSocketServer::start(const std::string& address, int port) {
             void* conn_id = connectionState.get();
 
             if (msg->type == ix::WebSocketMessageType::Open) {
+                verbose_log("WS", "Client connected: " + connectionState->getRemoteIp());
                 // Don't create session yet - wait for init message from client
             }
             else if (msg->type == ix::WebSocketMessageType::Close) {
+                verbose_log("WS", "Client disconnected: " + connectionState->getRemoteIp());
                 // Clean up the session
                 std::lock_guard<std::mutex> lock(sessions_mutex_);
                 sessions_.erase(conn_id);
             }
             else if (msg->type == ix::WebSocketMessageType::Message) {
+                verbose_in("WS", "Message: " + truncate(msg->str, 500));
                 handle_message(conn_id, webSocket, msg->str);
             }
             else if (msg->type == ix::WebSocketMessageType::Error) {
                 // Ignore "Could not parse url" errors - these are typically from
                 // non-WebSocket requests (like browser pre-flight checks)
                 if (msg->errorInfo.reason.find("Could not parse url") == std::string::npos) {
+                    verbose_err("WS", "Error: " + msg->errorInfo.reason);
                     std::cerr << "WebSocket error: " << msg->errorInfo.reason << std::endl;
                 }
             }
@@ -134,6 +139,9 @@ void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std
 
 void WebSocketServer::handle_init(void* conn_id, ix::WebSocket& ws,
                                    const std::string& chat_id, const std::string& agent_id) {
+    verbose_log("WS", "handle_init: chat_id=" + (chat_id.empty() ? "(new)" : chat_id) +
+                      " agent_id=" + (agent_id.empty() ? "(none)" : agent_id));
+
     std::shared_ptr<ChatSession> session;
     std::string effective_agent_id = agent_id;
 
@@ -204,8 +212,11 @@ void WebSocketServer::send_history(ix::WebSocket& ws, std::shared_ptr<ChatSessio
 }
 
 void WebSocketServer::send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession> session) {
+    verbose_log("WS", "send_intro: sending intro message to client");
+
     // Check if we have a cached intro message
     if (settings_ && !settings_->cached_intro_message.empty()) {
+        verbose_log("WS", "Using cached intro message");
         // Use cached intro - send it as delta messages
         const std::string& cached = settings_->cached_intro_message;
 
@@ -222,6 +233,7 @@ void WebSocketServer::send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession>
         send_json(ws, {{"type", "done"}});
     } else {
         // Generate intro and cache it
+        verbose_log("WS", "Generating new intro message via OpenAI API");
         session->add_hidden_user_message(INITIAL_PROMPT);
 
         std::string full_response;
@@ -264,6 +276,9 @@ void WebSocketServer::send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession>
 
 void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
                                      const std::string& content, bool hidden) {
+    verbose_log("WS", "process_query: content=" + truncate(content, 100) +
+                      " hidden=" + (hidden ? "true" : "false"));
+
     // Track if this is the first real message (will materialize the chat)
     bool was_pending = !session->is_materialized();
 
@@ -316,7 +331,9 @@ void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSessi
 }
 
 void WebSocketServer::send_json(ix::WebSocket& ws, const nlohmann::json& msg) {
-    ws.send(msg.dump());
+    std::string msg_str = msg.dump();
+    verbose_out("WS", "Send: " + truncate(msg_str, 500));
+    ws.send(msg_str);
 }
 
 void WebSocketServer::update_settings(std::shared_ptr<ChatSession> session) {

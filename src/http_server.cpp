@@ -1,6 +1,7 @@
 #include "http_server.hpp"
 #include "embedded_resources.hpp"
 #include "settings.hpp"
+#include "verbose.hpp"
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -24,7 +25,8 @@ bool HttpServer::start(const std::string& address, int port) {
     httplib::Server svr;
 
     // REST API: Get chat list
-    svr.Get("/api/chats", [this](const httplib::Request&, httplib::Response& res) {
+    svr.Get("/api/chats", [this](const httplib::Request& req, httplib::Response& res) {
+        verbose_in("HTTP", "GET /api/chats");
         res.set_header("Content-Type", "application/json");
 
         if (!settings_) {
@@ -42,11 +44,14 @@ bool HttpServer::start(const std::string& address, int port) {
             });
         }
 
+        verbose_out("HTTP", "Response: " + std::to_string(chats_json.size()) + " chats");
         res.set_content(chats_json.dump(), "application/json");
     });
 
     // REST API: Get single chat info
     svr.Get(R"(/api/chats/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string chat_id = req.matches[1];
+        verbose_in("HTTP", "GET /api/chats/" + chat_id);
         res.set_header("Content-Type", "application/json");
 
         if (!settings_) {
@@ -55,7 +60,6 @@ bool HttpServer::start(const std::string& address, int port) {
             return;
         }
 
-        std::string chat_id = req.matches[1];
         const ChatInfo* chat = find_chat(*settings_, chat_id);
 
         if (!chat) {
@@ -75,7 +79,8 @@ bool HttpServer::start(const std::string& address, int port) {
     });
 
     // REST API: Get agent list
-    svr.Get("/api/agents", [this](const httplib::Request&, httplib::Response& res) {
+    svr.Get("/api/agents", [this](const httplib::Request& req, httplib::Response& res) {
+        verbose_in("HTTP", "GET /api/agents");
         res.set_header("Content-Type", "application/json");
 
         if (!settings_) {
@@ -94,11 +99,13 @@ bool HttpServer::start(const std::string& address, int port) {
             });
         }
 
+        verbose_out("HTTP", "Response: " + std::to_string(agents_json.size()) + " agents");
         res.set_content(agents_json.dump(), "application/json");
     });
 
     // REST API: Create or update an agent
     svr.Post("/api/agents", [this](const httplib::Request& req, httplib::Response& res) {
+        verbose_in("HTTP", "POST /api/agents: " + truncate(req.body, 200));
         res.set_header("Content-Type", "application/json");
 
         if (!settings_) {
@@ -158,6 +165,7 @@ bool HttpServer::start(const std::string& address, int port) {
                 {"created_at", agent.created_at}
             };
 
+            verbose_out("HTTP", "Created/updated agent: " + agent.id);
             res.set_content(response.dump(), "application/json");
 
         } catch (const json::exception& e) {
