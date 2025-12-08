@@ -19,6 +19,7 @@ type Msg
     | InputKeyDown Int
     | OnScroll ScrollEvent
     | GotElementPosition { id : String, top : Float }
+    | RefreshTocPositions
     | StreamDelta String
     | StreamDone (Maybe String)  -- Optional chat ID from server
     | StreamError String

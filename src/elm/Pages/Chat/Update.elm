@@ -15,6 +15,7 @@ import Browser.Dom as Dom
 import Markdown.ChatMarkBlock as ChatMarkBlock
 import Pages.Chat.Model exposing (ChatMessage, Model, ScrollEvent, TocEntry)
 import Pages.Chat.Msg exposing (Msg(..))
+import Process
 import Task
 import Update2 as U2
 
@@ -66,6 +67,9 @@ update protocol msg model =
 
         GotElementPosition position ->
             cacheElementPosition protocol position model
+
+        RefreshTocPositions ->
+            refreshAllTocPositions protocol model
 
         StreamDelta content ->
             processStreamingDelta protocol content model
@@ -299,9 +303,13 @@ addHistoryMessage protocol role content model =
         messageIndex =
             List.length model.messages
 
-        -- Parse the content into markdown blocks
+        -- User messages are kept as plain text (PendingBlock), assistant messages are parsed
         blocks =
-            ChatMarkBlock.parseMarkdown content
+            if role == "user" then
+                [ ChatMarkBlock.PendingBlock content ]
+
+            else
+                ChatMarkBlock.parseMarkdown content
 
         historyMessage =
             { role = role, blocks = blocks }
@@ -345,6 +353,23 @@ queryNewTocEntryPositions protocol model =
             List.map (.id >> queryTocElementPosition >> Cmd.map protocol.toMsg) newEntries
     in
     ( model, Cmd.batch positionQueries )
+        |> protocol.onUpdate
+
+
+refreshAllTocPositions : Protocol model msg -> Model -> ( model, Cmd msg )
+refreshAllTocPositions protocol model =
+    let
+        -- Clear all cached positions and re-query all TOC entries
+        allCurrentEntries =
+            model.tocEntriesHistory ++ model.tocEntriesStreaming
+
+        positionQueries =
+            List.map (.id >> queryTocElementPosition >> Cmd.map protocol.toMsg) allCurrentEntries
+
+        clearedModel =
+            { model | tocElementPositions = [] }
+    in
+    ( clearedModel, Cmd.batch positionQueries )
         |> protocol.onUpdate
 
 
@@ -432,12 +457,17 @@ scrollToEntry targetId =
 -}
 scrollToBottom : Cmd Msg
 scrollToBottom =
-    Dom.getViewportOf "messages-container"
-        |> Task.andThen
-            (\viewport ->
-                Dom.setViewportOf "messages-container" 0 viewport.scene.height
-            )
-        |> Task.attempt ScrollResult
+    Cmd.batch
+        [ Dom.getViewportOf "messages-container"
+            |> Task.andThen
+                (\viewport ->
+                    Dom.setViewportOf "messages-container" 0 viewport.scene.height
+                )
+            |> Task.attempt ScrollResult
+        , -- Delay the refresh to allow scroll to complete and DOM to settle
+          Process.sleep 100
+            |> Task.perform (\_ -> RefreshTocPositions)
+        ]
 
 
 queryTocElementPosition : String -> Cmd Msg
