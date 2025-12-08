@@ -96,7 +96,8 @@ void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std
         if (type == "init") {
             // Initialize session - either new or reconnecting to existing
             std::string chat_id = json.value("chat_id", "");
-            handle_init(conn_id, ws, chat_id);
+            std::string agent_id = json.value("agent_id", "");
+            handle_init(conn_id, ws, chat_id, agent_id);
             return;
         }
 
@@ -131,24 +132,49 @@ void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std
     }
 }
 
-void WebSocketServer::handle_init(void* conn_id, ix::WebSocket& ws, const std::string& chat_id) {
+void WebSocketServer::handle_init(void* conn_id, ix::WebSocket& ws,
+                                   const std::string& chat_id, const std::string& agent_id) {
     std::shared_ptr<ChatSession> session;
+    std::string effective_agent_id = agent_id;
 
     if (!chat_id.empty() && settings_) {
         // Try to load existing chat
         const ChatInfo* chat_info = find_chat(*settings_, chat_id);
         if (chat_info) {
-            session = ChatSession::load(chat_info->json_file, system_prompt_);
+            // Use the agent_id stored with the chat (for reconnections)
+            effective_agent_id = chat_info->agent_id;
+
+            // Build system prompt with agent instructions if applicable
+            std::string effective_prompt = system_prompt_;
+            if (!effective_agent_id.empty()) {
+                const AgentInfo* agent = find_agent(*settings_, effective_agent_id);
+                if (agent) {
+                    effective_prompt = system_prompt_ + "\n\n" + agent->instructions;
+                }
+            }
+
+            session = ChatSession::load(chat_info->json_file, effective_prompt);
             if (session) {
-                // Restore the OpenAI response ID for continuation
+                // Restore the OpenAI response ID and agent ID for continuation
                 session->set_openai_response_id(chat_info->openai_response_id);
+                session->set_agent_id(effective_agent_id);
             }
         }
     }
 
     if (!session) {
+        // Build system prompt with agent instructions if applicable
+        std::string effective_prompt = system_prompt_;
+        if (!effective_agent_id.empty() && settings_) {
+            const AgentInfo* agent = find_agent(*settings_, effective_agent_id);
+            if (agent) {
+                effective_prompt = system_prompt_ + "\n\n" + agent->instructions;
+            }
+        }
+
         // Create new session (starts in pending state - no files yet)
-        session = std::make_shared<ChatSession>(system_prompt_, log_dir_);
+        session = std::make_shared<ChatSession>(effective_prompt, log_dir_);
+        session->set_agent_id(effective_agent_id);
     }
 
     {
@@ -305,6 +331,7 @@ void WebSocketServer::update_settings(std::shared_ptr<ChatSession> session) {
     chat.openai_response_id = session->get_openai_response_id();
     chat.created_at = session->get_created_at();
     chat.title = session->get_title();
+    chat.agent_id = session->get_agent_id();
 
     upsert_chat(*settings_, chat);
     save_settings(*settings_);

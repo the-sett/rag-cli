@@ -55,6 +55,7 @@ std::optional<Settings> load_settings() {
                 chat.openai_response_id = chat_json.value("openai_response_id", "");
                 chat.created_at = chat_json.value("created_at", "");
                 chat.title = chat_json.value("title", "");
+                chat.agent_id = chat_json.value("agent_id", "");
                 if (!chat.id.empty()) {
                     settings.chats.push_back(chat);
                 }
@@ -100,14 +101,18 @@ void save_settings(const Settings& settings) {
 
     json chats_json = json::array();
     for (const auto& chat : settings.chats) {
-        chats_json.push_back({
+        json chat_obj = {
             {"id", chat.id},
             {"log_file", chat.log_file},
             {"json_file", chat.json_file},
             {"openai_response_id", chat.openai_response_id},
             {"created_at", chat.created_at},
             {"title", chat.title}
-        });
+        };
+        if (!chat.agent_id.empty()) {
+            chat_obj["agent_id"] = chat.agent_id;
+        }
+        chats_json.push_back(chat_obj);
     }
     j["chats"] = chats_json;
 

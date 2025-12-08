@@ -67,6 +67,7 @@ type alias Model =
     , chat : Chat.Model
     , agents : Agents.Model
     , pendingChatInit : Maybe String  -- Chat ID to send on init (Nothing = new chat, Just "" = needs init, Just id = reconnect)
+    , pendingAgentId : Maybe String   -- Agent ID to use when starting a new chat with an agent
     , sessionInitialized : Bool       -- Whether we've sent an init message for current session
     }
 
@@ -139,6 +140,7 @@ init flagsValue =
             , chat = chatModel
             , agents = agentsModel
             , pendingChatInit = pendingInit
+            , pendingAgentId = Nothing
             , sessionInitialized = False
             }
     in
@@ -169,6 +171,7 @@ introProtocol model =
             | intro = introModel
             , chat = newChatModel
             , pendingChatInit = Just ""  -- Empty string means new chat
+            , pendingAgentId = Nothing   -- No agent for regular chat
             , sessionInitialized = False
           }
         , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString (Navigation.Chat Nothing)) ]
@@ -183,21 +186,22 @@ introProtocol model =
             | intro = introModel
             , chat = newChatModel
             , pendingChatInit = Just chatId  -- Reconnect to existing chat
+            , pendingAgentId = Nothing       -- Agent ID is stored with the chat on server
             , sessionInitialized = False
           }
         , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString (Navigation.Chat (Just chatId))) ]
         )
     , onSelectAgentChat = \agentId ( introModel, cmds ) ->
         let
-            -- Start new chat with agent - for now just start a new chat
-            -- TODO: Pass agent ID to chat so it uses agent's instructions
+            -- Start new chat with agent
             ( newChatModel, _ ) =
                 Chat.init Nothing
         in
         ( { model
             | intro = introModel
             , chat = newChatModel
-            , pendingChatInit = Just ""  -- New chat
+            , pendingChatInit = Just ""      -- New chat
+            , pendingAgentId = Just agentId  -- Agent to use for this chat
             , sessionInitialized = False
           }
         , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString (Navigation.Chat Nothing)) ]
@@ -317,12 +321,20 @@ sendInitMessage : Websocket.SocketId -> String -> Model -> ( Model, Cmd Msg )
 sendInitMessage socketId chatId model =
     let
         initJson =
-            if String.isEmpty chatId then
-                "{\"type\":\"init\"}"
-            else
+            if not (String.isEmpty chatId) then
+                -- Reconnecting to existing chat - just send chat_id
                 "{\"type\":\"init\",\"chat_id\":" ++ encodeString chatId ++ "}"
+
+            else
+                -- New chat - may include agent_id
+                case model.pendingAgentId of
+                    Just agentId ->
+                        "{\"type\":\"init\",\"agent_id\":" ++ encodeString agentId ++ "}"
+
+                    Nothing ->
+                        "{\"type\":\"init\"}"
     in
-    ( { model | sessionInitialized = True, pendingChatInit = Nothing }
+    ( { model | sessionInitialized = True, pendingChatInit = Nothing, pendingAgentId = Nothing }
     , wsApi.send socketId initJson WsSent
     )
 

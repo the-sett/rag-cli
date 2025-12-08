@@ -82,6 +82,12 @@ public:
     // Returns the ISO 8601 creation timestamp (empty if pending).
     const std::string& get_created_at() const { return created_at_; }
 
+    // Returns the agent ID if this chat was started with an agent.
+    const std::string& get_agent_id() const { return agent_id_; }
+
+    // Sets the agent ID for this chat.
+    void set_agent_id(const std::string& id) { agent_id_ = id; }
+
 private:
     std::string log_dir_;                // Directory for log files
     std::string system_prompt_;          // System prompt (for pending state)
@@ -89,6 +95,7 @@ private:
     std::string created_at_;             // ISO 8601 timestamp
     std::string title_;                  // First line of first user message
     std::string openai_response_id_;     // Last OpenAI response ID
+    std::string agent_id_;               // Agent ID if started with an agent
     std::vector<Message> conversation_;  // In-memory conversation history.
     size_t visible_start_index_ = 0;     // Index where visible messages begin (after hidden intro)
     std::string log_path_;               // Path to the markdown log file.

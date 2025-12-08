@@ -39,6 +39,7 @@ struct ChatInfo {
     std::string openai_response_id;  // Last OpenAI response ID for continuation
     std::string created_at;          // ISO 8601 timestamp
     std::string title;               // First line of first user message
+    std::string agent_id;            // Agent ID if chat was started with an agent (empty otherwise)
 };
 
 /**
