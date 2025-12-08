@@ -12,8 +12,9 @@ find_package(CLI11 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(CMARK REQUIRED libcmark)
 
-# Fetch cpp-httplib for HTTP server
+# Fetch cpp-httplib for HTTP server (header-only, no install needed)
 include(FetchContent)
+set(HTTPLIB_INSTALL OFF CACHE BOOL "Disable httplib installation")
 FetchContent_Declare(
     httplib
     GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
@@ -21,9 +22,10 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(httplib)
 
-# Fetch IXWebSocket for WebSocket server
+# Fetch IXWebSocket for WebSocket server (static lib, no install needed)
 set(USE_TLS OFF CACHE BOOL "Disable TLS for IXWebSocket")
 set(USE_OPEN_SSL OFF CACHE BOOL "Disable OpenSSL for IXWebSocket")
+set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "Disable IXWebSocket installation")
 FetchContent_Declare(
     ixwebsocket
     GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
@@ -211,7 +213,14 @@ set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/the-sett/rag-cli")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 
 # Debian specific settings
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "libcurl4 (>= 7.0), libcmark0.30.2 (>= 0.30.0) | libcmark-dev")
+# Dependencies:
+# - libcurl4: HTTP client for OpenAI API
+# - libcmark0.30.2: Markdown parsing
+# - libssl3: SSL/TLS for HTTPS (required by libcurl for OpenAI API)
+# - libbrotli1: Brotli compression (required by cpp-httplib)
+# - zlib1g: Compression (required by cpp-httplib)
+# - ca-certificates: SSL certificates for HTTPS verification (critical for OpenAI API)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libcurl4 (>= 7.0), libcmark0.30.2 (>= 0.30.0) | libcmark-dev, libssl3, libbrotli1, zlib1g, ca-certificates")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
