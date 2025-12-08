@@ -27,6 +27,7 @@ type alias Model =
     , activeTocEntryId : Maybe String
     , tocElementPositions : List { id : String, top : Float }
     , chatId : Maybe String  -- Current chat ID (Nothing for new chats)
+    , sidebarVisible : Bool  -- Whether the sidebar is visible (controlled by MCP)
     }
 
 

@@ -2,6 +2,7 @@
 #include "settings.hpp"
 #include "config.hpp"
 #include "verbose.hpp"
+#include "mcp_tools.hpp"
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -289,19 +290,40 @@ void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSessi
         session->add_user_message(content);  // This materializes if pending
     }
 
-    // Stream the response
+    // Stream the response with MCP tools enabled
     std::string full_response;
 
+    // Get MCP tool definitions
+    nlohmann::json mcp_tools = get_mcp_tool_definitions();
+
     try {
-        std::string response_id = client_.stream_response(
+        std::string response_id = client_.stream_response_with_tools(
             model_,
             session->get_conversation(),
             vector_store_id_,
             reasoning_effort_,
             session->get_openai_response_id(),
+            mcp_tools,
+            // on_text callback
             [this, &ws, &full_response](const std::string& delta) {
                 full_response += delta;
                 send_json(ws, {{"type", "delta"}, {"content", delta}});
+            },
+            // on_tool_call callback - returns result string
+            [this, &ws](const std::string& call_id, const std::string& name, const nlohmann::json& args) -> std::string {
+                verbose_log("MCP", "Executing tool: " + name);
+
+                // Execute the tool and send UI command
+                if (name == TOOL_OPEN_SIDEBAR) {
+                    send_ui_command(ws, "open_sidebar", nlohmann::json::object());
+                    return "Sidebar opened successfully.";
+                } else if (name == TOOL_CLOSE_SIDEBAR) {
+                    send_ui_command(ws, "close_sidebar", nlohmann::json::object());
+                    return "Sidebar closed successfully.";
+                } else {
+                    verbose_err("MCP", "Unknown tool: " + name);
+                    return "Unknown tool: " + name;
+                }
             }
         );
 
@@ -334,6 +356,16 @@ void WebSocketServer::send_json(ix::WebSocket& ws, const nlohmann::json& msg) {
     std::string msg_str = msg.dump();
     verbose_out("WS", "Send: " + truncate(msg_str, 500));
     ws.send(msg_str);
+}
+
+void WebSocketServer::send_ui_command(ix::WebSocket& ws, const std::string& command, const nlohmann::json& params) {
+    nlohmann::json msg = {
+        {"type", "ui_command"},
+        {"command", command},
+        {"params", params}
+    };
+    verbose_log("MCP", "Sending UI command: " + command);
+    send_json(ws, msg);
 }
 
 void WebSocketServer::update_settings(std::shared_ptr<ChatSession> session) {

@@ -4,7 +4,7 @@
  * WebSocket server for real-time chat communication.
  *
  * Handles WebSocket connections from the Elm frontend, processes chat queries,
- * and streams responses back to clients.
+ * and streams responses back to clients. Also supports MCP tools for UI control.
  */
 
 #include "openai_client.hpp"
@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <nlohmann/json.hpp>
 
 namespace ix {
 class WebSocket;
@@ -117,6 +118,9 @@ private:
 
     // Sends a JSON message to a client
     void send_json(ix::WebSocket& ws, const nlohmann::json& msg);
+
+    // Sends a UI command to a client (for MCP tool execution)
+    void send_ui_command(ix::WebSocket& ws, const std::string& command, const nlohmann::json& params);
 
     // Updates the settings with chat info
     void update_settings(std::shared_ptr<ChatSession> session);

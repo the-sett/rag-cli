@@ -513,4 +513,189 @@ std::string OpenAIClient::stream_response(
     return response_id;
 }
 
+std::string OpenAIClient::stream_response_with_tools(
+    const std::string& model,
+    const std::vector<Message>& conversation,
+    const std::string& vector_store_id,
+    const std::string& reasoning_effort,
+    const std::string& previous_response_id,
+    const nlohmann::json& additional_tools,
+    OnTextCallback on_text,
+    OnToolCallWithResultCallback on_tool_call
+) {
+    std::string url = std::string(OPENAI_API_BASE) + "/responses";
+
+    // Build conversation JSON.
+    json input = json::array();
+    for (const auto& msg : conversation) {
+        input.push_back(msg.to_json());
+    }
+
+    // Build tools array - start with file_search, add additional tools
+    json tools = json::array({
+        {
+            {"type", "file_search"},
+            {"vector_store_ids", json::array({vector_store_id})}
+        }
+    });
+
+    // Add additional tools (MCP function tools)
+    for (const auto& tool : additional_tools) {
+        tools.push_back(tool);
+    }
+
+    // Build request body.
+    json body = {
+        {"model", model},
+        {"input", input},
+        {"stream", true},
+        {"tools", tools}
+    };
+
+    if (!reasoning_effort.empty()) {
+        body["reasoning"] = {{"effort", reasoning_effort}};
+    }
+
+    // Add previous_response_id for conversation continuation
+    std::string current_response_id = previous_response_id;
+    if (!current_response_id.empty()) {
+        body["previous_response_id"] = current_response_id;
+    }
+
+    // Loop to handle tool calls - after each tool call, we submit results and continue
+    while (true) {
+        // Track response ID, errors, and tool calls during streaming.
+        std::string response_id;
+        std::string stream_error;
+
+        // Collect tool calls during this response
+        struct PendingToolCall {
+            std::string call_id;
+            std::string name;
+            std::string arguments;
+        };
+        std::vector<PendingToolCall> pending_tool_calls;
+
+        // Track current tool call being built (for streaming tool calls)
+        std::string current_call_id;
+        std::string current_tool_name;
+        std::string current_arguments;
+
+        // Stream the response.
+        http_post_stream(url, body, [&](const std::string& data) {
+            try {
+                json event = json::parse(data);
+                std::string event_type = event.value("type", "");
+
+                if (event_type == "response.created") {
+                    // Capture the response ID when the response is created
+                    if (event.contains("response") && event["response"].contains("id")) {
+                        response_id = event["response"]["id"].get<std::string>();
+                    }
+                } else if (event_type == "response.output_text.delta") {
+                    std::string delta = event.value("delta", "");
+                    if (!delta.empty() && on_text) {
+                        on_text(delta);
+                    }
+                } else if (event_type == "response.output_item.added") {
+                    // Check if this is a function call
+                    if (event.contains("item") && event["item"].contains("type")) {
+                        if (event["item"]["type"] == "function_call") {
+                            current_call_id = event["item"].value("call_id", "");
+                            current_tool_name = event["item"].value("name", "");
+                            current_arguments.clear();
+                            verbose_log("MCP", "Tool call started: " + current_tool_name + " (id: " + current_call_id + ")");
+                        }
+                    }
+                } else if (event_type == "response.function_call_arguments.delta") {
+                    // Accumulate function call arguments
+                    std::string delta = event.value("delta", "");
+                    current_arguments += delta;
+                } else if (event_type == "response.function_call_arguments.done") {
+                    // Function call complete - store it for later execution
+                    std::string call_id = event.value("call_id", current_call_id);
+                    std::string name = event.value("name", current_tool_name);
+                    std::string args_str = event.value("arguments", current_arguments);
+
+                    verbose_log("MCP", "Tool call complete: " + name + " args: " + args_str);
+
+                    pending_tool_calls.push_back({call_id, name, args_str});
+
+                    // Reset current tool call state
+                    current_call_id.clear();
+                    current_tool_name.clear();
+                    current_arguments.clear();
+                } else if (event_type == "error") {
+                    // Capture error from the stream.
+                    if (event.contains("error") && event["error"].contains("message")) {
+                        stream_error = event["error"]["message"].get<std::string>();
+                    } else {
+                        stream_error = "Unknown API error";
+                    }
+                } else if (event_type == "response.failed") {
+                    // Capture error from failed response.
+                    if (event.contains("response") &&
+                        event["response"].contains("error") &&
+                        event["response"]["error"].contains("message")) {
+                        stream_error = event["response"]["error"]["message"].get<std::string>();
+                    }
+                }
+            } catch (const json::exception&) {
+                // Ignore malformed JSON in stream.
+            }
+        });
+
+        // Throw if we encountered an error during streaming.
+        if (!stream_error.empty()) {
+            throw std::runtime_error(stream_error);
+        }
+
+        // If no tool calls, we're done
+        if (pending_tool_calls.empty()) {
+            return response_id;
+        }
+
+        // Execute tool calls and collect results
+        json tool_outputs = json::array();
+        for (const auto& tc : pending_tool_calls) {
+            std::string result;
+            if (on_tool_call) {
+                try {
+                    json args = json::parse(tc.arguments.empty() ? "{}" : tc.arguments);
+                    result = on_tool_call(tc.call_id, tc.name, args);
+                } catch (const json::exception& e) {
+                    verbose_err("MCP", "Failed to parse tool arguments: " + std::string(e.what()));
+                    result = on_tool_call(tc.call_id, tc.name, json::object());
+                }
+            } else {
+                result = "Tool executed";
+            }
+
+            tool_outputs.push_back({
+                {"type", "function_call_output"},
+                {"call_id", tc.call_id},
+                {"output", result}
+            });
+
+            verbose_log("MCP", "Tool " + tc.name + " returned: " + result);
+        }
+
+        // Build follow-up request with tool outputs
+        current_response_id = response_id;
+        body = {
+            {"model", model},
+            {"input", tool_outputs},
+            {"stream", true},
+            {"tools", tools},
+            {"previous_response_id", current_response_id}
+        };
+
+        if (!reasoning_effort.empty()) {
+            body["reasoning"] = {{"effort", reasoning_effort}};
+        }
+
+        verbose_log("MCP", "Submitting tool results and continuing...");
+    }
+}
+
 } // namespace rag

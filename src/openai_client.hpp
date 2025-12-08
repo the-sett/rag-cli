@@ -28,6 +28,12 @@ struct Message {
 };
 
 /**
+ * Callback types for streaming responses.
+ */
+using OnTextCallback = std::function<void(const std::string&)>;
+using OnToolCallCallback = std::function<void(const std::string& call_id, const std::string& name, const nlohmann::json& arguments)>;
+
+/**
  * HTTP client for OpenAI API interactions.
  *
  * Handles authentication, request formatting, and response parsing for all
@@ -88,6 +94,26 @@ public:
         const std::string& reasoning_effort,
         const std::string& previous_response_id,
         std::function<void(const std::string&)> on_text
+    );
+
+    // Callback for tool calls that returns the tool output string
+    using OnToolCallWithResultCallback = std::function<std::string(const std::string& call_id, const std::string& name, const nlohmann::json& arguments)>;
+
+    // Streams a response with MCP tools enabled.
+    // The on_text callback is invoked for each text delta received.
+    // The on_tool_call callback is invoked when a tool call is requested.
+    //   It should return a string result that will be sent back to OpenAI.
+    // The additional_tools parameter contains function tool definitions.
+    // Returns the new response ID for conversation continuation.
+    std::string stream_response_with_tools(
+        const std::string& model,
+        const std::vector<Message>& conversation,
+        const std::string& vector_store_id,
+        const std::string& reasoning_effort,
+        const std::string& previous_response_id,
+        const nlohmann::json& additional_tools,
+        OnTextCallback on_text,
+        OnToolCallWithResultCallback on_tool_call
     );
 
 private:

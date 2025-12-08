@@ -27,8 +27,16 @@ type alias Actions msg =
 view : Actions msg -> Model -> Html msg
 view actions model =
     HS.div
-        [ HA.class "main-layout" ]
-        [ viewSidebar actions model
+        [ HA.class "main-layout"
+        , if model.sidebarVisible then
+            HA.class ""
+          else
+            HA.class "sidebar-hidden"
+        ]
+        [ if model.sidebarVisible then
+            viewSidebar actions model
+          else
+            HS.text ""
         , HS.div
             [ HA.class "content-column" ]
             [ HS.div

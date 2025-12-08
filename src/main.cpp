@@ -123,7 +123,12 @@ std::string build_system_prompt() {
         "You are a specialized assistant. "
         "Use ONLY the provided file knowledge when relevant. "
         "If the files do not contain the answer, you may reason normally but clearly "
-        "state that you are extrapolating.";
+        "state that you are extrapolating. "
+        "You have access to tools that control the user interface: "
+        "open_sidebar shows the navigation sidebar on the left, and "
+        "close_sidebar hides it to give more space for the chat. "
+        "Use these tools when the user asks to show or hide the sidebar, "
+        "or when you think it would improve their experience.";
 }
 
 // ========== Settings Management ==========

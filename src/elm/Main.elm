@@ -443,7 +443,25 @@ handleServerMessage payload model =
                 ErrorMessage errorMsg ->
                     Chat.receiveStreamError (chatProtocol model) errorMsg model.chat
 
+                UiCommandMessage { command } ->
+                    -- Handle UI commands from MCP tools
+                    handleUiCommand command model
+
         Err _ ->
+            U2.pure model
+
+
+handleUiCommand : String -> Model -> ( Model, Cmd Msg )
+handleUiCommand command model =
+    case command of
+        "open_sidebar" ->
+            Chat.setSidebarVisible (chatProtocol model) True model.chat
+
+        "close_sidebar" ->
+            Chat.setSidebarVisible (chatProtocol model) False model.chat
+
+        _ ->
+            -- Unknown command, ignore
             U2.pure model
 
 
@@ -453,6 +471,7 @@ type ServerMessage
     | ReadyMessage (Maybe String)
     | HistoryMessage { role : String, content : String }
     | ErrorMessage String
+    | UiCommandMessage { command : String }
 
 
 serverMessageDecoder : Decode.Decoder ServerMessage
@@ -478,6 +497,10 @@ serverMessageDecoder =
 
                 "error" ->
                     Decode.map ErrorMessage (Decode.field "message" Decode.string)
+
+                "ui_command" ->
+                    Decode.map (\cmd -> UiCommandMessage { command = cmd })
+                        (Decode.field "command" Decode.string)
 
                 _ ->
                     Decode.fail ("Unknown message type: " ++ msgType)

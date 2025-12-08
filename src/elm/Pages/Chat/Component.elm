@@ -10,6 +10,7 @@ module Pages.Chat.Component exposing
     , receiveStreamError
     , receiveHistoryMessage
     , scrollToBottom
+    , setSidebarVisible
     )
 
 {-| Chat page component.
@@ -50,6 +51,7 @@ init chatId =
       , activeTocEntryId = Nothing
       , tocElementPositions = []
       , chatId = chatId
+      , sidebarVisible = True
       }
     , Cmd.none
     )
@@ -102,3 +104,10 @@ receiveHistoryMessage =
 scrollToBottom : (Msg -> msg) -> Cmd msg
 scrollToBottom toMsg =
     Update.scrollToBottom |> Cmd.map toMsg
+
+
+{-| Set sidebar visibility. Used by MCP tools.
+-}
+setSidebarVisible : Protocol model msg -> Bool -> Model -> ( model, Cmd msg )
+setSidebarVisible protocol visible model =
+    protocol.onUpdate ( { model | sidebarVisible = visible }, Cmd.none )
