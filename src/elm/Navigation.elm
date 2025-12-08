@@ -23,6 +23,7 @@ import Url.Parser as Parser exposing ((</>), Parser)
 type Route
     = Intro
     | Chat (Maybe String)  -- Optional chat ID for existing conversations
+    | Agents               -- Agents management page
 
 
 {-| Convert a route to a URL path string.
@@ -38,6 +39,9 @@ routeToString route =
 
         Chat (Just chatId) ->
             "/chat/" ++ chatId
+
+        Agents ->
+            "/agents"
 
 
 {-| Parse a location href string into a route.
@@ -57,6 +61,7 @@ routeParser =
         , Parser.map Intro (Parser.s "intro")
         , Parser.map (Chat Nothing) (Parser.s "chat")
         , Parser.map (\id -> Chat (Just id)) (Parser.s "chat" </> Parser.string)
+        , Parser.map Agents (Parser.s "agents")
         ]
 
 

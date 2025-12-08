@@ -341,34 +341,42 @@ introStyles =
     [ Css.Global.class "intro-page"
         [ Css.displayFlex
         , Css.flex (Css.int 1)
-        , Css.alignItems Css.center
-        , Css.justifyContent Css.center
+        , Css.flexDirection Css.column
         , Css.backgroundColor colorBackground
+        , Css.overflow Css.auto
         ]
-    , Css.Global.class "intro-content"
+
+    -- Header section - compact at the top
+    , Css.Global.class "intro-header"
         [ Css.textAlign Css.center
-        , Css.padding space4
+        , Css.padding2 space3 space4
+        , Css.flexShrink Css.zero
         ]
     , Css.Global.class "intro-title"
-        [ Css.fontSize (Css.rem 3)
+        [ Css.fontSize (Css.rem 2)
         , Css.fontWeight (Css.int 700)
         , Css.color colorText
-        , Css.margin4 Css.zero Css.zero space2 Css.zero
+        , Css.margin4 Css.zero Css.zero space1 Css.zero
         , mediaMedium
-            [ Css.fontSize (Css.rem 4)
+            [ Css.fontSize (Css.rem 2.5)
             ]
         ]
     , Css.Global.class "intro-subtitle"
-        [ Css.fontSize (Css.rem 1.25)
+        [ Css.fontSize (Css.rem 1)
         , Css.color colorTextSecondary
-        , Css.margin4 Css.zero Css.zero space4 Css.zero
+        , Css.margin4 Css.zero Css.zero space2 Css.zero
         , mediaMedium
-            [ Css.fontSize (Css.rem 1.5)
+            [ Css.fontSize (Css.rem 1.25)
             ]
         ]
+    , Css.Global.class "intro-buttons"
+        [ Css.displayFlex
+        , Css.property "gap" "1rem"
+        , Css.justifyContent Css.center
+        ]
     , Css.Global.class "intro-ready-button"
-        [ Css.padding2 space2 space4
-        , Css.fontSize (Css.rem 1.25)
+        [ Css.padding2 space1 space3
+        , Css.fontSize (Css.rem 1)
         , Css.fontWeight (Css.int 700)
         , Css.color colorBackground
         , Css.backgroundColor colorBrand
@@ -380,46 +388,84 @@ introStyles =
             [ Css.backgroundColor colorBrandHover
             ]
         , mediaMedium
-            [ Css.fontSize (Css.rem 1.5)
-            , Css.padding2 space3 space5
+            [ Css.fontSize (Css.rem 1.25)
+            , Css.padding2 space2 space4
+            ]
+        ]
+    , Css.Global.class "intro-agents-button"
+        [ Css.padding2 space1 space3
+        , Css.fontSize (Css.rem 1)
+        , Css.fontWeight (Css.int 700)
+        , Css.color colorText
+        , Css.backgroundColor colorBackgroundSecondary
+        , Css.border3 (Css.px 2) Css.solid colorBorder
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        , Css.property "transition" "background-color 0.2s, border-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBackgroundTertiary
+            , Css.borderColor colorBorderDark
+            ]
+        , mediaMedium
+            [ Css.fontSize (Css.rem 1.25)
+            , Css.padding2 space2 space4
             ]
         ]
 
-    -- Chat list styles
-    , Css.Global.class "chat-list"
-        [ Css.marginTop space4
-        , Css.textAlign Css.left
-        , Css.width (Css.pct 100)
-        , Css.maxWidth (Css.px 500)
+    -- Two-column layout for lists
+    , Css.Global.class "intro-columns"
+        [ Css.displayFlex
+        , Css.flex (Css.int 1)
+        , Css.flexDirection Css.column
+        , Css.padding2 Css.zero space3
+        , Css.property "gap" "1.5rem"
+        , Css.overflow Css.auto
+        , mediaMedium
+            [ Css.flexDirection Css.row
+            , Css.padding2 Css.zero space4
+            ]
         ]
-    , Css.Global.class "chat-list-loading"
-        [ Css.marginTop space3
-        , Css.color colorTextSecondary
-        , Css.fontStyle Css.italic
+    , Css.Global.class "intro-column"
+        [ Css.flex (Css.int 1)
+        , Css.minWidth Css.zero
+        , Css.padding space2
+        , Css.backgroundColor colorBackgroundSecondary
+        , Css.borderRadius (Css.px 8)
         ]
-    , Css.Global.class "chat-list-empty"
-        [ Css.marginTop space3
-        , Css.color colorTextSecondary
-        , Css.fontStyle Css.italic
-        ]
-    , Css.Global.class "chat-list-title"
-        [ Css.fontSize (Css.rem 1.25)
+    , Css.Global.class "intro-column-title"
+        [ Css.fontSize (Css.rem 1.125)
         , Css.fontWeight (Css.int 700)
         , Css.color colorText
         , Css.margin4 Css.zero Css.zero space2 Css.zero
+        , Css.paddingBottom space1
+        , Css.borderBottom3 (Css.px 1) Css.solid colorBorderLight
         , mediaMedium
-            [ Css.fontSize (Css.rem 1.5)
+            [ Css.fontSize (Css.rem 1.25)
             ]
         ]
-    , Css.Global.class "chat-list-items"
+
+    -- List styles (shared by chats and agents)
+    , Css.Global.class "intro-list-loading"
+        [ Css.color colorTextSecondary
+        , Css.fontStyle Css.italic
+        , Css.padding space2
+        ]
+    , Css.Global.class "intro-list-empty"
+        [ Css.color colorTextSecondary
+        , Css.fontStyle Css.italic
+        , Css.padding space2
+        ]
+    , Css.Global.class "intro-list-items"
         [ Css.listStyle Css.none
         , Css.margin Css.zero
         , Css.padding Css.zero
+        , Css.maxHeight (Css.vh 50)
+        , Css.overflowY Css.auto
         ]
-    , Css.Global.class "chat-list-item"
-        [ Css.padding2 space2 space2
+    , Css.Global.class "intro-list-item"
+        [ Css.padding2 space1 space2
         , Css.marginBottom space1
-        , Css.backgroundColor colorBackgroundSecondary
+        , Css.backgroundColor colorBackground
         , Css.borderRadius (Css.px 4)
         , Css.cursor Css.pointer
         , Css.property "transition" "background-color 0.2s"
@@ -427,21 +473,21 @@ introStyles =
             [ Css.backgroundColor colorBackgroundTertiary
             ]
         ]
-    , Css.Global.class "chat-item-title"
-        [ Css.fontSize (Css.rem 1)
+    , Css.Global.class "intro-item-title"
+        [ Css.fontSize (Css.rem 0.9375)
         , Css.fontWeight (Css.int 500)
         , Css.color colorText
         , Css.overflow Css.hidden
         , Css.textOverflow Css.ellipsis
         , Css.whiteSpace Css.noWrap
         , mediaMedium
-            [ Css.fontSize (Css.rem 1.125)
+            [ Css.fontSize (Css.rem 1)
             ]
         ]
-    , Css.Global.class "chat-item-date"
-        [ Css.fontSize (Css.rem 0.875)
+    , Css.Global.class "intro-item-date"
+        [ Css.fontSize (Css.rem 0.75)
         , Css.color colorTextSecondary
-        , Css.marginTop (Css.rem 0.25)
+        , Css.marginTop (Css.rem 0.125)
         ]
     ]
 
@@ -954,6 +1000,47 @@ inputStyles =
     , Css.Global.class "input-send-button-disabled"
         [ Css.backgroundColor colorBorder
         , Css.cursor Css.notAllowed
+        ]
+
+    -- New agent button in sidebar
+    , Css.Global.class "new-agent-button"
+        [ Css.width (Css.pct 100)
+        , Css.padding2 space1 space2
+        , Css.marginBottom space2
+        , Css.fontSize (Css.rem 1)
+        , Css.fontWeight (Css.int 700)
+        , Css.color colorBackground
+        , Css.backgroundColor colorBrand
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBrandHover
+            ]
+        ]
+
+    -- Agent editor container
+    , Css.Global.class "agent-editor"
+        [ Css.displayFlex
+        , Css.flexDirection Css.column
+        , Css.flex (Css.int 1)
+        , Css.padding space3
+        , Css.backgroundColor colorBackground
+        ]
+    , Css.Global.class "agent-editor-title"
+        [ Css.fontSize (Css.rem 1.5)
+        , Css.fontWeight (Css.int 700)
+        , Css.color colorText
+        , Css.margin4 Css.zero Css.zero space2 Css.zero
+        ]
+    , Css.Global.class "agent-error"
+        [ Css.padding space2
+        , Css.marginBottom space2
+        , Css.backgroundColor (Css.hex "fdd")
+        , Css.color colorNegative
+        , Css.borderRadius (Css.px 4)
+        , Css.fontSize (Css.rem 1)
         ]
     ]
 

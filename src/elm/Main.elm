@@ -8,6 +8,7 @@ import Html.Styled.Attributes as HA
 import Json.Decode as Decode exposing (Value)
 import Main.Style
 import Navigation exposing (Route)
+import Pages.Agents.Component as Agents
 import Pages.Chat.Component as Chat
 import Pages.Intro.Component as Intro
 import Ports
@@ -64,6 +65,7 @@ type alias Model =
     , route : Maybe Route
     , intro : Intro.Model
     , chat : Chat.Model
+    , agents : Agents.Model
     , pendingChatInit : Maybe String  -- Chat ID to send on init (Nothing = new chat, Just "" = needs init, Just id = reconnect)
     , sessionInitialized : Bool       -- Whether we've sent an init message for current session
     }
@@ -82,6 +84,7 @@ type Msg
     | GoHome
     | IntroMsg Intro.Msg
     | ChatMsg Chat.Msg
+    | AgentsMsg Agents.Msg
 
 
 
@@ -124,6 +127,9 @@ init flagsValue =
         ( chatModel, _ ) =
             Chat.init initialChatId
 
+        ( agentsModel, _ ) =
+            Agents.init
+
         model =
             { procedureState = Procedure.Program.init
             , cragUrl = flags.cragUrl
@@ -131,6 +137,7 @@ init flagsValue =
             , route = Just initialRoute
             , intro = introModel
             , chat = chatModel
+            , agents = agentsModel
             , pendingChatInit = pendingInit
             , sessionInitialized = False
             }
@@ -139,6 +146,7 @@ init flagsValue =
     , Cmd.batch
         [ wsApi.open flags.cragUrl WsOpened
         , Intro.fetchChats IntroMsg
+        , Intro.fetchAgents IntroMsg
         ]
     )
 
@@ -179,6 +187,25 @@ introProtocol model =
           }
         , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString (Navigation.Chat (Just chatId))) ]
         )
+    , onSelectAgentChat = \agentId ( introModel, cmds ) ->
+        let
+            -- Start new chat with agent - for now just start a new chat
+            -- TODO: Pass agent ID to chat so it uses agent's instructions
+            ( newChatModel, _ ) =
+                Chat.init Nothing
+        in
+        ( { model
+            | intro = introModel
+            , chat = newChatModel
+            , pendingChatInit = Just ""  -- New chat
+            , sessionInitialized = False
+          }
+        , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString (Navigation.Chat Nothing)) ]
+        )
+    , onGoToAgents = \( introModel, cmds ) ->
+        ( { model | intro = introModel }
+        , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString Navigation.Agents) ]
+        )
     }
 
 
@@ -199,6 +226,13 @@ chatProtocol model =
 
             _ ->
                 ( { model | chat = chatModel }, cmds )
+    }
+
+
+agentsProtocol : Model -> Agents.Protocol Model Msg
+agentsProtocol model =
+    { toMsg = AgentsMsg
+    , onUpdate = \( agentsModel, cmds ) -> ( { model | agents = agentsModel }, cmds )
     }
 
 
@@ -250,6 +284,9 @@ update msg model =
 
         ChatMsg chatMsg ->
             Chat.update (chatProtocol model) chatMsg model.chat
+
+        AgentsMsg agentsMsg ->
+            Agents.update (agentsProtocol model) agentsMsg model.agents
 
 
 
@@ -308,8 +345,13 @@ handleUrlChanged route model =
     in
     case route of
         Just Navigation.Intro ->
-            -- Fetch chats when navigating to Intro page
-            ( baseModel, Intro.fetchChats IntroMsg )
+            -- Fetch chats and agents when navigating to Intro page
+            ( baseModel
+            , Cmd.batch
+                [ Intro.fetchChats IntroMsg
+                , Intro.fetchAgents IntroMsg
+                ]
+            )
 
         Just (Navigation.Chat maybeChatId) ->
             -- When navigating to chat, send init if connected and not already initialized
@@ -332,6 +374,10 @@ handleUrlChanged route model =
 
                 _ ->
                     U2.pure modelWithPending
+
+        Just Navigation.Agents ->
+            -- Fetch agents when navigating to Agents page
+            ( baseModel, Agents.fetchAgents AgentsMsg )
 
         Nothing ->
             U2.pure baseModel
@@ -475,6 +521,14 @@ viewPage model =
                 , onGoHome = GoHome
                 }
                 model.chat
+
+        Just Navigation.Agents ->
+            Agents.view
+                { toMsg = AgentsMsg
+                , isConnected = isConnected model.connectionStatus
+                , onGoHome = GoHome
+                }
+                model.agents
 
         Nothing ->
             Intro.view { toMsg = IntroMsg } model.intro

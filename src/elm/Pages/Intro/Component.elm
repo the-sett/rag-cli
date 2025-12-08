@@ -6,6 +6,7 @@ module Pages.Intro.Component exposing
     , update
     , view
     , fetchChats
+    , fetchAgents
     )
 
 {-| Intro page component.
@@ -35,7 +36,9 @@ type alias Protocol model msg =
 init : ( Model, Cmd msg )
 init =
     ( { chats = []
-      , loading = False
+      , agents = []
+      , loadingChats = False
+      , loadingAgents = False
       , error = Nothing
       }
     , Cmd.none
@@ -61,3 +64,10 @@ view =
 fetchChats : (Msg -> msg) -> Cmd msg
 fetchChats =
     Update.fetchChats
+
+
+{-| Fetch the agent list from the server.
+-}
+fetchAgents : (Msg -> msg) -> Cmd msg
+fetchAgents =
+    Update.fetchAgents

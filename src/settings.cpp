@@ -61,6 +61,19 @@ std::optional<Settings> load_settings() {
             }
         }
 
+        if (j.contains("agents") && j["agents"].is_array()) {
+            for (const auto& agent_json : j["agents"]) {
+                AgentInfo agent;
+                agent.id = agent_json.value("id", "");
+                agent.name = agent_json.value("name", "");
+                agent.instructions = agent_json.value("instructions", "");
+                agent.created_at = agent_json.value("created_at", "");
+                if (!agent.id.empty()) {
+                    settings.agents.push_back(agent);
+                }
+            }
+        }
+
         settings.cached_intro_message = j.value("cached_intro_message", "");
 
         return settings;
@@ -97,6 +110,17 @@ void save_settings(const Settings& settings) {
         });
     }
     j["chats"] = chats_json;
+
+    json agents_json = json::array();
+    for (const auto& agent : settings.agents) {
+        agents_json.push_back({
+            {"id", agent.id},
+            {"name", agent.name},
+            {"instructions", agent.instructions},
+            {"created_at", agent.created_at}
+        });
+    }
+    j["agents"] = agents_json;
 
     if (!settings.cached_intro_message.empty()) {
         j["cached_intro_message"] = settings.cached_intro_message;
@@ -139,6 +163,41 @@ const ChatInfo* find_chat(const Settings& settings, const std::string& chat_id) 
         return &(*it);
     }
     return nullptr;
+}
+
+void upsert_agent(Settings& settings, const AgentInfo& agent) {
+    // Find existing agent by ID
+    auto it = std::find_if(settings.agents.begin(), settings.agents.end(),
+        [&agent](const AgentInfo& a) { return a.id == agent.id; });
+
+    if (it != settings.agents.end()) {
+        // Update existing
+        *it = agent;
+    } else {
+        // Add new
+        settings.agents.push_back(agent);
+    }
+}
+
+const AgentInfo* find_agent(const Settings& settings, const std::string& agent_id) {
+    auto it = std::find_if(settings.agents.begin(), settings.agents.end(),
+        [&agent_id](const AgentInfo& a) { return a.id == agent_id; });
+
+    if (it != settings.agents.end()) {
+        return &(*it);
+    }
+    return nullptr;
+}
+
+bool delete_agent(Settings& settings, const std::string& agent_id) {
+    auto it = std::find_if(settings.agents.begin(), settings.agents.end(),
+        [&agent_id](const AgentInfo& a) { return a.id == agent_id; });
+
+    if (it != settings.agents.end()) {
+        settings.agents.erase(it);
+        return true;
+    }
+    return false;
 }
 
 } // namespace rag

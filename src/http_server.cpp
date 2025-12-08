@@ -4,6 +4,7 @@
 #include <httplib.h>
 #include <nlohmann/json.hpp>
 #include <filesystem>
+#include <chrono>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -71,6 +72,98 @@ bool HttpServer::start(const std::string& address, int port) {
         };
 
         res.set_content(chat_json.dump(), "application/json");
+    });
+
+    // REST API: Get agent list
+    svr.Get("/api/agents", [this](const httplib::Request&, httplib::Response& res) {
+        res.set_header("Content-Type", "application/json");
+
+        if (!settings_) {
+            res.status = 500;
+            res.set_content(R"({"error": "Settings not available"})", "application/json");
+            return;
+        }
+
+        json agents_json = json::array();
+        for (const auto& agent : settings_->agents) {
+            agents_json.push_back({
+                {"id", agent.id},
+                {"name", agent.name},
+                {"instructions", agent.instructions},
+                {"created_at", agent.created_at}
+            });
+        }
+
+        res.set_content(agents_json.dump(), "application/json");
+    });
+
+    // REST API: Create or update an agent
+    svr.Post("/api/agents", [this](const httplib::Request& req, httplib::Response& res) {
+        res.set_header("Content-Type", "application/json");
+
+        if (!settings_) {
+            res.status = 500;
+            res.set_content(R"({"error": "Settings not available"})", "application/json");
+            return;
+        }
+
+        try {
+            json body = json::parse(req.body);
+
+            AgentInfo agent;
+            agent.name = body.value("name", "");
+            agent.instructions = body.value("instructions", "");
+
+            if (agent.name.empty() || agent.instructions.empty()) {
+                res.status = 400;
+                res.set_content(R"({"error": "Name and instructions are required"})", "application/json");
+                return;
+            }
+
+            // Check if updating existing agent
+            if (body.contains("id") && !body["id"].get<std::string>().empty()) {
+                agent.id = body["id"].get<std::string>();
+                // Keep existing created_at if updating
+                const AgentInfo* existing = find_agent(*settings_, agent.id);
+                if (existing) {
+                    agent.created_at = existing->created_at;
+                } else {
+                    res.status = 404;
+                    res.set_content(R"({"error": "Agent not found"})", "application/json");
+                    return;
+                }
+            } else {
+                // Generate new ID and timestamp
+                auto now = std::chrono::system_clock::now();
+                auto time_t_now = std::chrono::system_clock::to_time_t(now);
+                std::tm tm_now;
+                localtime_r(&time_t_now, &tm_now);
+
+                char id_buf[64];
+                strftime(id_buf, sizeof(id_buf), "agent_%Y%m%d_%H%M%S", &tm_now);
+                agent.id = id_buf;
+
+                char time_buf[64];
+                strftime(time_buf, sizeof(time_buf), "%Y-%m-%dT%H:%M:%S", &tm_now);
+                agent.created_at = time_buf;
+            }
+
+            upsert_agent(*settings_, agent);
+            save_settings(*settings_);
+
+            json response = {
+                {"id", agent.id},
+                {"name", agent.name},
+                {"instructions", agent.instructions},
+                {"created_at", agent.created_at}
+            };
+
+            res.set_content(response.dump(), "application/json");
+
+        } catch (const json::exception& e) {
+            res.status = 400;
+            res.set_content(R"({"error": "Invalid JSON"})", "application/json");
+        }
     });
 
     if (use_embedded_) {

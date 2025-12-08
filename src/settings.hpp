@@ -42,6 +42,19 @@ struct ChatInfo {
 };
 
 /**
+ * Agent definition.
+ *
+ * An agent is a named set of instructions that can be used to customize
+ * the AI's behavior for specific tasks.
+ */
+struct AgentInfo {
+    std::string id;           // Unique agent ID (e.g., "agent_20241207_143022")
+    std::string name;         // Agent name (first line of instructions)
+    std::string instructions; // Full agent instructions
+    std::string created_at;   // ISO 8601 timestamp
+};
+
+/**
  * Application settings stored in .crag.json.
  *
  * Contains model configuration, vector store reference, and metadata for
@@ -54,6 +67,7 @@ struct Settings {
     std::vector<std::string> file_patterns;               // Original glob patterns.
     std::map<std::string, FileMetadata> indexed_files;    // Filepath to metadata mapping.
     std::vector<ChatInfo> chats;                          // Chat session history.
+    std::vector<AgentInfo> agents;                        // Agent definitions.
     std::string cached_intro_message;                     // Cached AI intro message.
 
     // Returns true if settings contain required fields for operation.
@@ -76,5 +90,14 @@ void upsert_chat(Settings& settings, const ChatInfo& chat);
 
 // Finds a chat by ID. Returns nullptr if not found.
 const ChatInfo* find_chat(const Settings& settings, const std::string& chat_id);
+
+// Adds or updates an agent in settings.
+void upsert_agent(Settings& settings, const AgentInfo& agent);
+
+// Finds an agent by ID. Returns nullptr if not found.
+const AgentInfo* find_agent(const Settings& settings, const std::string& agent_id);
+
+// Deletes an agent by ID. Returns true if deleted.
+bool delete_agent(Settings& settings, const std::string& agent_id);
 
 } // namespace rag
