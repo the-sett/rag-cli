@@ -591,11 +591,6 @@ int main(int argc, char* argv[]) {
     console.println();
     console.print_header("=== RAG CLI Ready ===");
     console.println();
-
-    // Send initial prompt to get the AI to introduce itself.
-    process_query(INITIAL_PROMPT, true);
-    console.println();
-    console.println();
     console.println("Type 'quit' to exit. Press Enter twice quickly to submit.");
     console.println();
 

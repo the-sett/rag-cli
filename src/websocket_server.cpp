@@ -1,6 +1,5 @@
 #include "websocket_server.hpp"
 #include "settings.hpp"
-#include "config.hpp"
 #include "verbose.hpp"
 #include "mcp_tools.hpp"
 #include <ixwebsocket/IXWebSocketServer.h>
@@ -191,14 +190,17 @@ void WebSocketServer::handle_init(void* conn_id, ix::WebSocket& ws,
         sessions_[conn_id] = session;
     }
 
-    // For new chats, send the intro message
-    if (chat_id.empty()) {
-        send_intro(ws, session);
-    } else {
-        // For existing chats, replay history then send ready
+    // For existing chats, replay history
+    if (!chat_id.empty()) {
         send_history(ws, session);
-        send_json(ws, {{"type", "ready"}, {"chat_id", session->get_chat_id()}});
     }
+
+    // Send ready - chat_id will be empty for new chats
+    nlohmann::json ready_msg = {{"type", "ready"}};
+    if (!session->get_chat_id().empty()) {
+        ready_msg["chat_id"] = session->get_chat_id();
+    }
+    send_json(ws, ready_msg);
 }
 
 void WebSocketServer::send_history(ix::WebSocket& ws, std::shared_ptr<ChatSession> session) {
@@ -209,69 +211,6 @@ void WebSocketServer::send_history(ix::WebSocket& ws, std::shared_ptr<ChatSessio
             {"role", msg.role},
             {"content", msg.content}
         });
-    }
-}
-
-void WebSocketServer::send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession> session) {
-    verbose_log("WS", "send_intro: sending intro message to client");
-
-    // Check if we have a cached intro message
-    if (settings_ && !settings_->cached_intro_message.empty()) {
-        verbose_log("WS", "Using cached intro message");
-        // Use cached intro - send it as delta messages
-        const std::string& cached = settings_->cached_intro_message;
-
-        // Add the hidden prompt to conversation (so context is correct)
-        session->add_hidden_user_message(INITIAL_PROMPT);
-
-        // Send cached response as a single delta
-        send_json(ws, {{"type", "delta"}, {"content", cached}});
-
-        // Add to session (won't save to files since not materialized)
-        session->add_assistant_message(cached);
-
-        // Send done - no chat_id since chat isn't materialized yet
-        send_json(ws, {{"type", "done"}});
-    } else {
-        // Generate intro and cache it
-        verbose_log("WS", "Generating new intro message via OpenAI API");
-        session->add_hidden_user_message(INITIAL_PROMPT);
-
-        std::string full_response;
-
-        try {
-            std::string response_id = client_.stream_response(
-                model_,
-                session->get_conversation(),
-                vector_store_id_,
-                reasoning_effort_,
-                session->get_openai_response_id(),
-                [this, &ws, &full_response](const std::string& delta) {
-                    full_response += delta;
-                    send_json(ws, {{"type", "delta"}, {"content", delta}});
-                }
-            );
-
-            // Add assistant response to conversation (won't save since not materialized)
-            session->add_assistant_message(full_response);
-
-            // Store the response ID
-            if (!response_id.empty()) {
-                session->set_openai_response_id(response_id);
-            }
-
-            // Cache the intro message for future use
-            if (settings_) {
-                settings_->cached_intro_message = full_response;
-                save_settings(*settings_);
-            }
-
-            // Send done - no chat_id since chat isn't materialized yet
-            send_json(ws, {{"type", "done"}});
-
-        } catch (const std::exception& e) {
-            send_json(ws, {{"type", "error"}, {"message", e.what()}});
-        }
     }
 }
 

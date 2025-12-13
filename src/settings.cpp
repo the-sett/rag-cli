@@ -75,8 +75,6 @@ std::optional<Settings> load_settings() {
             }
         }
 
-        settings.cached_intro_message = j.value("cached_intro_message", "");
-
         return settings;
     } catch (const json::exception&) {
         return std::nullopt;
@@ -126,10 +124,6 @@ void save_settings(const Settings& settings) {
         });
     }
     j["agents"] = agents_json;
-
-    if (!settings.cached_intro_message.empty()) {
-        j["cached_intro_message"] = settings.cached_intro_message;
-    }
 
     std::ofstream file(SETTINGS_FILE);
     if (file.is_open()) {

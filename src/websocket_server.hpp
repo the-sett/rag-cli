@@ -106,9 +106,6 @@ private:
     void handle_init(void* conn_id, ix::WebSocket& ws,
                      const std::string& chat_id, const std::string& agent_id);
 
-    // Sends the intro message (cached or generated)
-    void send_intro(ix::WebSocket& ws, std::shared_ptr<ChatSession> session);
-
     // Sends chat history for reconnecting to existing chat
     void send_history(ix::WebSocket& ws, std::shared_ptr<ChatSession> session);
 

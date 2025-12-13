@@ -69,7 +69,6 @@ struct Settings {
     std::map<std::string, FileMetadata> indexed_files;    // Filepath to metadata mapping.
     std::vector<ChatInfo> chats;                          // Chat session history.
     std::vector<AgentInfo> agents;                        // Agent definitions.
-    std::string cached_intro_message;                     // Cached AI intro message.
 
     // Returns true if settings contain required fields for operation.
     bool is_valid() const {
