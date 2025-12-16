@@ -12,6 +12,7 @@ import Pages.Chat.Model exposing (ScrollEvent)
 type Msg
     = UserInputChanged String
     | SendMessage
+    | CancelStream
     | ScrollToEntry String
     | ScrollResult (Result Dom.Error ())
     | InputFocused
@@ -22,4 +23,5 @@ type Msg
     | RefreshTocPositions
     | StreamDelta String
     | StreamDone (Maybe String)  -- Optional chat ID from server
+    | StreamCancelled
     | StreamError String

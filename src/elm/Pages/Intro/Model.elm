@@ -32,4 +32,5 @@ type alias Model =
     , loadingChats : Bool
     , loadingAgents : Bool
     , error : Maybe String
+    , deletingChatId : Maybe String
     }

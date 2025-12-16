@@ -20,6 +20,8 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <unistd.h>
+#include <termios.h>
 
 using namespace rag;
 
@@ -438,7 +440,8 @@ int main(int argc, char* argv[]) {
     bool render_markdown = !non_interactive && !plain_output;
 
     // Process a single query. If hidden is true, the user message won't be logged.
-    auto process_query = [&](const std::string& user_input, bool hidden = false) {
+    // Returns true if completed normally, false if cancelled.
+    auto process_query = [&](const std::string& user_input, bool hidden = false) -> bool {
         if (hidden) {
             chat.add_hidden_user_message(user_input);
         } else {
@@ -448,6 +451,8 @@ int main(int argc, char* argv[]) {
         std::string streamed_text;
         std::atomic<bool> first_chunk{true};
         std::atomic<bool> stop_spinner{false};
+        std::atomic<bool> cancel_requested{false};
+        std::atomic<bool> streaming_started{false};
 
         // Set global pointer for signal handler.
         g_stop_spinner = &stop_spinner;
@@ -462,7 +467,7 @@ int main(int argc, char* argv[]) {
                     std::string spinner_line = "\r";
                     spinner_line += ansi::CYAN;
                     spinner_line += frames[frame];
-                    spinner_line += " Thinking...";
+                    spinner_line += " Thinking... (press Esc to cancel)";
                     spinner_line += ansi::RESET;
                     console.print_raw(spinner_line);
                     console.flush();
@@ -471,6 +476,38 @@ int main(int argc, char* argv[]) {
                 }
             });
         }
+
+        // Keyboard polling thread for escape key detection (interactive mode only)
+        std::thread keyboard_thread;
+        if (!non_interactive && terminal::is_tty()) {
+            keyboard_thread = std::thread([&]() {
+                // Set up raw mode for immediate key detection
+                struct termios orig_termios, raw_termios;
+                tcgetattr(STDIN_FILENO, &orig_termios);
+                raw_termios = orig_termios;
+                raw_termios.c_lflag &= ~(ECHO | ICANON);
+                raw_termios.c_cc[VMIN] = 0;
+                raw_termios.c_cc[VTIME] = 1;  // 100ms timeout
+                tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw_termios);
+
+                while (!stop_spinner.load() && !cancel_requested.load()) {
+                    char c;
+                    ssize_t n = read(STDIN_FILENO, &c, 1);
+                    if (n == 1 && c == 27) {  // ESC key
+                        cancel_requested.store(true);
+                        stop_spinner.store(true);
+                    }
+                }
+
+                // Restore terminal settings
+                tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+            });
+        }
+
+        // Cancel callback for streaming
+        auto cancel_check = [&cancel_requested]() -> bool {
+            return cancel_requested.load();
+        };
 
         try {
             std::string response_id;
@@ -491,6 +528,7 @@ int main(int argc, char* argv[]) {
                         if (first_chunk.exchange(false)) {
                             // Stop spinner and clear the line before first output.
                             stop_spinner.store(true);
+                            streaming_started.store(true);
                             if (spinner_thread.joinable()) {
                                 spinner_thread.join();
                             }
@@ -498,7 +536,8 @@ int main(int argc, char* argv[]) {
                         }
                         renderer.feed(delta);
                         streamed_text += delta;
-                    }
+                    },
+                    cancel_check
                 );
 
                 renderer.finish();
@@ -514,6 +553,7 @@ int main(int argc, char* argv[]) {
                         if (first_chunk.exchange(false) && !non_interactive) {
                             // Stop spinner and clear the line before first output.
                             stop_spinner.store(true);
+                            streaming_started.store(true);
                             if (spinner_thread.joinable()) {
                                 spinner_thread.join();
                             }
@@ -526,8 +566,26 @@ int main(int argc, char* argv[]) {
                             console.flush();
                         }
                         streamed_text += delta;
-                    }
+                    },
+                    cancel_check
                 );
+            }
+
+            // Check if we were cancelled
+            if (cancel_requested.load()) {
+                // Stop threads and show cancellation message
+                stop_spinner.store(true);
+                if (spinner_thread.joinable()) {
+                    spinner_thread.join();
+                }
+                if (keyboard_thread.joinable()) {
+                    keyboard_thread.join();
+                }
+                console.print_raw("\r\033[K");
+                console.println();
+                console.print_warning("Cancelled.");
+                g_stop_spinner = nullptr;
+                return false;
             }
 
             // Store the response ID for conversation continuation.
@@ -540,11 +598,16 @@ int main(int argc, char* argv[]) {
             if (spinner_thread.joinable()) {
                 spinner_thread.join();
             }
+            if (keyboard_thread.joinable()) {
+                keyboard_thread.join();
+            }
             if (!non_interactive) {
                 console.print_raw("\r\033[K");  // Clear spinner line.
             }
             console.println();
             console.print_error("Error: " + std::string(e.what()));
+            g_stop_spinner = nullptr;
+            return false;
         }
 
         // Ensure spinner thread is stopped.
@@ -552,11 +615,15 @@ int main(int argc, char* argv[]) {
         if (spinner_thread.joinable()) {
             spinner_thread.join();
         }
+        if (keyboard_thread.joinable()) {
+            keyboard_thread.join();
+        }
 
         // Clear global pointer now that spinner is done.
         g_stop_spinner = nullptr;
 
         chat.add_assistant_message(streamed_text);
+        return true;
     };
 
     // Non-interactive mode.

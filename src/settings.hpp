@@ -100,4 +100,7 @@ const AgentInfo* find_agent(const Settings& settings, const std::string& agent_i
 // Deletes an agent by ID. Returns true if deleted.
 bool delete_agent(Settings& settings, const std::string& agent_id);
 
+// Deletes a chat by ID. Returns true if deleted.
+bool delete_chat(Settings& settings, const std::string& chat_id);
+
 } // namespace rag

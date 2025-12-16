@@ -17,6 +17,7 @@ import Markdown.ChatMarkBlock exposing (ChatMarkBlock, StreamState)
 -}
 type alias Model =
     { userInput : String
+    , pendingUserInput : Maybe String  -- Saved input for cancel/restore
     , messages : List ChatMessage
     , streamState : StreamState
     , isWaitingForResponse : Bool

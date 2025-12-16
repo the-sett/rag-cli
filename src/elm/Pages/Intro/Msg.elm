@@ -18,3 +18,7 @@ type Msg
     | GotAgents (Result Http.Error (List AgentInfo))
     | FetchChats
     | FetchAgents
+    | RequestDeleteChat String
+    | ConfirmDeleteChat
+    | CancelDeleteChat
+    | ChatDeleted (Result Http.Error ())

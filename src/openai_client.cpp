@@ -22,7 +22,20 @@ static size_t write_callback(char* ptr, size_t size, size_t nmemb, void* userdat
 struct StreamContext {
     std::function<void(const std::string&)> on_data;  // Callback for each data event.
     std::string buffer;                                // Partial line buffer.
+    CancelCallback cancel_check;                       // Optional cancellation callback.
+    bool cancelled = false;                            // Set when cancelled.
 };
+
+// CURL progress callback for cancellation support.
+// Returns non-zero to abort the transfer.
+static int progress_callback(void* userdata, curl_off_t, curl_off_t, curl_off_t, curl_off_t) {
+    auto* ctx = static_cast<StreamContext*>(userdata);
+    if (ctx->cancel_check && ctx->cancel_check()) {
+        ctx->cancelled = true;
+        return 1;  // Non-zero aborts the transfer
+    }
+    return 0;
+}
 
 // CURL write callback for streaming SSE data. Parses Server-Sent Events and
 // invokes the context callback for each data event.
@@ -213,9 +226,10 @@ std::string OpenAIClient::http_post_multipart(const std::string& url,
     return response;
 }
 
-void OpenAIClient::http_post_stream(const std::string& url,
+bool OpenAIClient::http_post_stream(const std::string& url,
                                      const json& body,
-                                     std::function<void(const std::string&)> on_data) {
+                                     std::function<void(const std::string&)> on_data,
+                                     CancelCallback cancel_check) {
     std::string body_str = body.dump();
     verbose_out("CURL", "POST (stream) " + url);
     verbose_out("CURL", "Body: " + format_json_compact(body_str, 1000));
@@ -226,7 +240,7 @@ void OpenAIClient::http_post_stream(const std::string& url,
         throw std::runtime_error("Failed to initialize CURL");
     }
 
-    StreamContext ctx{on_data, ""};
+    StreamContext ctx{on_data, "", cancel_check, false};
 
     struct curl_slist* headers = nullptr;
     std::string auth_header = "Authorization: Bearer " + api_key_;
@@ -239,6 +253,13 @@ void OpenAIClient::http_post_stream(const std::string& url,
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body_str.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_write_callback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &ctx);
+
+    // Set up progress callback for cancellation support
+    if (cancel_check) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, progress_callback);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &ctx);
+    }
 
     if (is_verbose()) {
         curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
@@ -253,12 +274,24 @@ void OpenAIClient::http_post_stream(const std::string& url,
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
+    // Check if we were cancelled
+    if (ctx.cancelled) {
+        verbose_log("CURL", "Stream cancelled by user");
+        return false;
+    }
+
     if (res != CURLE_OK) {
+        // CURLE_ABORTED_BY_CALLBACK is expected when we cancel
+        if (res == CURLE_ABORTED_BY_CALLBACK) {
+            verbose_log("CURL", "Stream aborted by cancellation callback");
+            return false;
+        }
         verbose_err("CURL", std::string("Streaming POST failed: ") + curl_easy_strerror(res));
         throw std::runtime_error(std::string("HTTP streaming POST failed: ") + curl_easy_strerror(res));
     }
 
     verbose_in("CURL", "Stream complete, HTTP " + std::to_string(http_code));
+    return true;
 }
 
 std::vector<std::string> OpenAIClient::list_models() {
@@ -433,14 +466,29 @@ std::string OpenAIClient::stream_response(
     const std::string& vector_store_id,
     const std::string& reasoning_effort,
     const std::string& previous_response_id,
-    std::function<void(const std::string&)> on_text
+    std::function<void(const std::string&)> on_text,
+    CancelCallback cancel_check
 ) {
     std::string url = std::string(OPENAI_API_BASE) + "/responses";
 
-    // Build conversation JSON.
+    // Build input JSON.
+    // When using previous_response_id, only send the latest user message
+    // (the API maintains conversation context server-side).
+    // Otherwise, send the full conversation.
     json input = json::array();
-    for (const auto& msg : conversation) {
-        input.push_back(msg.to_json());
+    if (!previous_response_id.empty() && !conversation.empty()) {
+        // Find the last user message to send
+        for (auto it = conversation.rbegin(); it != conversation.rend(); ++it) {
+            if (it->role == "user") {
+                input.push_back(it->to_json());
+                break;
+            }
+        }
+    } else {
+        // No previous response - send full conversation
+        for (const auto& msg : conversation) {
+            input.push_back(msg.to_json());
+        }
     }
 
     // Build request body.
@@ -470,7 +518,7 @@ std::string OpenAIClient::stream_response(
     std::string stream_error;
 
     // Stream the response.
-    http_post_stream(url, body, [&](const std::string& data) {
+    bool completed = http_post_stream(url, body, [&](const std::string& data) {
         try {
             json event = json::parse(data);
             std::string event_type = event.value("type", "");
@@ -503,7 +551,12 @@ std::string OpenAIClient::stream_response(
         } catch (const json::exception&) {
             // Ignore malformed JSON in stream.
         }
-    });
+    }, cancel_check);
+
+    // If cancelled, return empty string to indicate cancellation
+    if (!completed) {
+        return "";
+    }
 
     // Throw if we encountered an error during streaming.
     if (!stream_error.empty()) {
@@ -521,14 +574,29 @@ std::string OpenAIClient::stream_response_with_tools(
     const std::string& previous_response_id,
     const nlohmann::json& additional_tools,
     OnTextCallback on_text,
-    OnToolCallWithResultCallback on_tool_call
+    OnToolCallWithResultCallback on_tool_call,
+    CancelCallback cancel_check
 ) {
     std::string url = std::string(OPENAI_API_BASE) + "/responses";
 
-    // Build conversation JSON.
+    // Build input JSON.
+    // When using previous_response_id, only send the latest user message
+    // (the API maintains conversation context server-side).
+    // Otherwise, send the full conversation.
     json input = json::array();
-    for (const auto& msg : conversation) {
-        input.push_back(msg.to_json());
+    if (!previous_response_id.empty() && !conversation.empty()) {
+        // Find the last user message to send
+        for (auto it = conversation.rbegin(); it != conversation.rend(); ++it) {
+            if (it->role == "user") {
+                input.push_back(it->to_json());
+                break;
+            }
+        }
+    } else {
+        // No previous response - send full conversation
+        for (const auto& msg : conversation) {
+            input.push_back(msg.to_json());
+        }
     }
 
     // Build tools array - start with file_search, add additional tools
@@ -582,7 +650,7 @@ std::string OpenAIClient::stream_response_with_tools(
         std::string current_arguments;
 
         // Stream the response.
-        http_post_stream(url, body, [&](const std::string& data) {
+        bool completed = http_post_stream(url, body, [&](const std::string& data) {
             try {
                 json event = json::parse(data);
                 std::string event_type = event.value("type", "");
@@ -643,7 +711,12 @@ std::string OpenAIClient::stream_response_with_tools(
             } catch (const json::exception&) {
                 // Ignore malformed JSON in stream.
             }
-        });
+        }, cancel_check);
+
+        // If cancelled, return empty string to indicate cancellation
+        if (!completed) {
+            return "";
+        }
 
         // Throw if we encountered an error during streaming.
         if (!stream_error.empty()) {

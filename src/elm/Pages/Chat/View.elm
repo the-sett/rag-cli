@@ -290,13 +290,14 @@ viewInput actions model =
             , HA.class wrapperStateClass
             ]
             [ HS.textarea
-                [ HA.class "input-textarea"
+                [ HA.id "chat-input"
+                , HA.class "input-textarea"
                 , HA.value model.userInput
                 , HE.onInput (UserInputChanged >> actions.toMsg)
                 , HE.onFocus (actions.toMsg InputFocused)
                 , HE.onBlur (actions.toMsg InputBlurred)
-                , HE.preventDefaultOn "keydown" (enterKeyDecoder actions model.lastEnterTime)
-                , HA.placeholder "Type your message... (press Enter twice to send)"
+                , HE.preventDefaultOn "keydown" (enterKeyDecoder actions model.lastEnterTime model.isWaitingForResponse)
+                , HA.placeholder "Type your message... (press Enter twice to send, Esc to cancel)"
                 , HA.disabled isDisabled
                 ]
                 []
@@ -319,16 +320,20 @@ viewInput actions model =
         ]
 
 
-enterKeyDecoder : Actions msg -> Int -> Decode.Decoder ( msg, Bool )
-enterKeyDecoder actions lastEnterTime =
+enterKeyDecoder : Actions msg -> Int -> Bool -> Decode.Decoder ( msg, Bool )
+enterKeyDecoder actions lastEnterTime isWaiting =
     let
-        decodeIfEnter key =
-            if key == "Enter" then
+        decodeKey key =
+            if key == "Escape" && isWaiting then
+                -- Handle Escape to cancel streaming
+                Decode.succeed ( actions.toMsg CancelStream, True )
+
+            else if key == "Enter" then
                 Decode.field "timeStamp" Decode.float
                     |> Decode.map toMsgWithPreventDefault
 
             else
-                Decode.fail "Not Enter key"
+                Decode.fail "Not a handled key"
 
         toMsgWithPreventDefault timestamp =
             let
@@ -344,4 +349,4 @@ enterKeyDecoder actions lastEnterTime =
             ( actions.toMsg (InputKeyDown currentTime), isDoubleEnter )
     in
     Decode.field "key" Decode.string
-        |> Decode.andThen decodeIfEnter
+        |> Decode.andThen decodeKey

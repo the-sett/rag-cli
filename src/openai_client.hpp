@@ -34,6 +34,12 @@ using OnTextCallback = std::function<void(const std::string&)>;
 using OnToolCallCallback = std::function<void(const std::string& call_id, const std::string& name, const nlohmann::json& arguments)>;
 
 /**
+ * Callback to check if cancellation has been requested.
+ * Returns true if the stream should be cancelled.
+ */
+using CancelCallback = std::function<bool()>;
+
+/**
  * HTTP client for OpenAI API interactions.
  *
  * Handles authentication, request formatting, and response parsing for all
@@ -86,6 +92,7 @@ public:
     // Streams a response from the model with file_search tool enabled.
     // The on_text callback is invoked for each text delta received.
     // If previous_response_id is provided, continues an existing conversation.
+    // The cancel_check callback is polled to allow cancellation (optional).
     // Returns the new response ID for conversation continuation.
     std::string stream_response(
         const std::string& model,
@@ -93,7 +100,8 @@ public:
         const std::string& vector_store_id,
         const std::string& reasoning_effort,
         const std::string& previous_response_id,
-        std::function<void(const std::string&)> on_text
+        std::function<void(const std::string&)> on_text,
+        CancelCallback cancel_check = nullptr
     );
 
     // Callback for tool calls that returns the tool output string
@@ -104,6 +112,7 @@ public:
     // The on_tool_call callback is invoked when a tool call is requested.
     //   It should return a string result that will be sent back to OpenAI.
     // The additional_tools parameter contains function tool definitions.
+    // The cancel_check callback is polled to allow cancellation (optional).
     // Returns the new response ID for conversation continuation.
     std::string stream_response_with_tools(
         const std::string& model,
@@ -113,7 +122,8 @@ public:
         const std::string& previous_response_id,
         const nlohmann::json& additional_tools,
         OnTextCallback on_text,
-        OnToolCallWithResultCallback on_tool_call
+        OnToolCallWithResultCallback on_tool_call,
+        CancelCallback cancel_check = nullptr
     );
 
 private:
@@ -135,9 +145,11 @@ private:
                                      const std::string& display_filename = "");
 
     // Performs a streaming HTTP POST for Server-Sent Events.
-    void http_post_stream(const std::string& url,
+    // Returns true if completed normally, false if cancelled.
+    bool http_post_stream(const std::string& url,
                           const nlohmann::json& body,
-                          std::function<void(const std::string&)> on_data);
+                          std::function<void(const std::string&)> on_data,
+                          CancelCallback cancel_check = nullptr);
 
     // Performs an HTTP DELETE request.
     std::string http_delete(const std::string& url);

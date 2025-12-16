@@ -1,6 +1,7 @@
 module Main exposing (main)
 
 import Browser
+import Browser.Events
 import Css.Global
 import Html
 import Html.Styled as HS exposing (Html)
@@ -83,6 +84,7 @@ type Msg
     | UrlChanged (Maybe Route)
     | Reconnect
     | GoHome
+    | GlobalKeyDown String
     | IntroMsg Intro.Msg
     | ChatMsg Chat.Msg
     | AgentsMsg Agents.Msg
@@ -230,6 +232,19 @@ chatProtocol model =
 
             _ ->
                 ( { model | chat = chatModel }, cmds )
+    , onCancelStream = \( chatModel, cmds ) ->
+        case model.connectionStatus of
+            Connected socketId ->
+                let
+                    cancelJson =
+                        "{\"type\":\"cancel\"}"
+                in
+                ( { model | chat = chatModel }
+                , Cmd.batch [ cmds, wsApi.send socketId cancelJson WsSent, Ports.debugLog "Sending cancel WebSocket message" ]
+                )
+
+            _ ->
+                ( { model | chat = chatModel }, Cmd.batch [ cmds, Ports.debugLog "Not connected - cannot send cancel" ] )
     }
 
 
@@ -282,6 +297,23 @@ update msg model =
 
         GoHome ->
             ( model, Navigation.pushUrl (Navigation.routeToString Navigation.Intro) )
+
+        GlobalKeyDown key ->
+            -- Handle Escape key to cancel streaming (only on chat page while waiting)
+            if key == "Escape" then
+                if model.chat.isWaitingForResponse then
+                    let
+                        ( newModel, cmds ) =
+                            Chat.update (chatProtocol model) Chat.cancelStreamMsg model.chat
+                    in
+                    ( newModel, Cmd.batch [ cmds, Ports.debugLog "Escape pressed - cancelling stream" ] )
+
+                else
+                    ( model, Ports.debugLog "Escape pressed - not waiting" )
+
+            else
+                -- Log all key presses for debugging
+                ( model, Ports.debugLog ("Key pressed: " ++ key) )
 
         IntroMsg introMsg ->
             Intro.update (introProtocol model) introMsg model.intro
@@ -432,6 +464,13 @@ handleServerMessage payload model =
                     in
                     ( newModel, Cmd.batch [ cmds, urlUpdateCmd ] )
 
+                CancelledMessage ->
+                    let
+                        ( newModel, cmds ) =
+                            Chat.receiveStreamCancelled (chatProtocol model) model.chat
+                    in
+                    ( newModel, Cmd.batch [ cmds, Ports.debugLog "Received cancelled message from server" ] )
+
                 ReadyMessage maybeChatId ->
                     -- Session ready for existing chat - history already sent, scroll to bottom
                     ( model, Chat.scrollToBottom ChatMsg )
@@ -468,6 +507,7 @@ handleUiCommand command model =
 type ServerMessage
     = DeltaMessage String
     | DoneMessage (Maybe String)
+    | CancelledMessage
     | ReadyMessage (Maybe String)
     | HistoryMessage { role : String, content : String }
     | ErrorMessage String
@@ -485,6 +525,9 @@ serverMessageDecoder =
                 "done" ->
                     Decode.map DoneMessage
                         (Decode.maybe (Decode.field "chat_id" Decode.string))
+
+                "cancelled" ->
+                    Decode.succeed CancelledMessage
 
                 "ready" ->
                     Decode.map ReadyMessage
@@ -521,6 +564,7 @@ subscriptions model =
         , wsApi.onClose WsClosedAsync
         , wsApi.onError WsError
         , Navigation.onUrlChange (Navigation.locationHrefToRoute >> UrlChanged)
+        , Browser.Events.onKeyDown (Decode.field "key" Decode.string |> Decode.map GlobalKeyDown)
         ]
 
 

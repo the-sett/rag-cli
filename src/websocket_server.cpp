@@ -49,9 +49,15 @@ bool WebSocketServer::start(const std::string& address, int port) {
             }
             else if (msg->type == ix::WebSocketMessageType::Close) {
                 verbose_log("WS", "Client disconnected: " + connectionState->getRemoteIp());
-                // Clean up the session
-                std::lock_guard<std::mutex> lock(sessions_mutex_);
-                sessions_.erase(conn_id);
+                // Clean up the session and cancel flag
+                {
+                    std::lock_guard<std::mutex> lock(sessions_mutex_);
+                    sessions_.erase(conn_id);
+                }
+                {
+                    std::lock_guard<std::mutex> lock(cancel_flags_mutex_);
+                    cancel_flags_.erase(conn_id);
+                }
             }
             else if (msg->type == ix::WebSocketMessageType::Message) {
                 verbose_in("WS", "Message: " + truncate(msg->str, 500));
@@ -88,8 +94,14 @@ void WebSocketServer::stop() {
         server_.reset();
     }
 
-    std::lock_guard<std::mutex> lock(sessions_mutex_);
-    sessions_.clear();
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        sessions_.clear();
+    }
+    {
+        std::lock_guard<std::mutex> lock(cancel_flags_mutex_);
+        cancel_flags_.clear();
+    }
 }
 
 void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std::string& message) {
@@ -103,6 +115,18 @@ void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std
             std::string chat_id = json.value("chat_id", "");
             std::string agent_id = json.value("agent_id", "");
             handle_init(conn_id, ws, chat_id, agent_id);
+            return;
+        }
+
+        if (type == "cancel") {
+            // Set the cancel flag for this connection
+            verbose_log("WS", "Cancel requested for connection");
+            std::lock_guard<std::mutex> lock(cancel_flags_mutex_);
+            auto it = cancel_flags_.find(conn_id);
+            if (it != cancel_flags_.end()) {
+                it->second->store(true);
+            }
+            // Note: the cancelled message will be sent by process_query when it detects cancellation
             return;
         }
 
@@ -130,7 +154,14 @@ void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std
             session = it->second;
         }
 
-        process_query(ws, session, content, false);
+        // Create/reset cancel flag for this query
+        auto cancel_flag = std::make_shared<std::atomic<bool>>(false);
+        {
+            std::lock_guard<std::mutex> lock(cancel_flags_mutex_);
+            cancel_flags_[conn_id] = cancel_flag;
+        }
+
+        process_query(conn_id, ws, session, content, false);
 
     } catch (const nlohmann::json::exception& e) {
         send_json(ws, {{"type", "error"}, {"message", "Invalid JSON"}});
@@ -214,7 +245,7 @@ void WebSocketServer::send_history(ix::WebSocket& ws, std::shared_ptr<ChatSessio
     }
 }
 
-void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
+void WebSocketServer::process_query(void* conn_id, ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
                                      const std::string& content, bool hidden) {
     verbose_log("WS", "process_query: content=" + truncate(content, 100) +
                       " hidden=" + (hidden ? "true" : "false"));
@@ -234,6 +265,16 @@ void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSessi
 
     // Get MCP tool definitions
     nlohmann::json mcp_tools = get_mcp_tool_definitions();
+
+    // Cancel callback - checks the cancel flag for this connection
+    auto cancel_check = [this, conn_id]() -> bool {
+        std::lock_guard<std::mutex> lock(cancel_flags_mutex_);
+        auto it = cancel_flags_.find(conn_id);
+        if (it != cancel_flags_.end()) {
+            return it->second->load();
+        }
+        return false;
+    };
 
     try {
         std::string response_id = client_.stream_response_with_tools(
@@ -263,8 +304,17 @@ void WebSocketServer::process_query(ix::WebSocket& ws, std::shared_ptr<ChatSessi
                     verbose_err("MCP", "Unknown tool: " + name);
                     return "Unknown tool: " + name;
                 }
-            }
+            },
+            cancel_check
         );
+
+        // Check if we were cancelled (empty response_id indicates cancellation)
+        if (response_id.empty() && cancel_check()) {
+            verbose_log("WS", "Query cancelled by user");
+            // Don't add incomplete response to conversation
+            send_json(ws, {{"type", "cancelled"}});
+            return;
+        }
 
         // Add assistant response to conversation
         session->add_assistant_message(full_response);

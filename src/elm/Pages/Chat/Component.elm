@@ -1,12 +1,14 @@
 module Pages.Chat.Component exposing
     ( Model
     , Msg
+    , cancelStreamMsg
     , Protocol
     , init
     , update
     , view
     , receiveStreamDelta
     , receiveStreamDone
+    , receiveStreamCancelled
     , receiveStreamError
     , receiveHistoryMessage
     , scrollToBottom
@@ -32,6 +34,13 @@ type alias Msg =
     Msg.Msg
 
 
+{-| Expose CancelStream message for external use.
+-}
+cancelStreamMsg : Msg
+cancelStreamMsg =
+    Msg.CancelStream
+
+
 type alias Protocol model msg =
     Update.Protocol model msg
 
@@ -41,6 +50,7 @@ type alias Protocol model msg =
 init : Maybe String -> ( Model, Cmd msg )
 init chatId =
     ( { userInput = ""
+      , pendingUserInput = Nothing
       , messages = []
       , streamState = ChatMarkBlock.initStreamState
       , isWaitingForResponse = False
@@ -83,6 +93,13 @@ receiveStreamDelta =
 receiveStreamDone : Protocol model msg -> Maybe String -> Model -> ( model, Cmd msg )
 receiveStreamDone =
     Update.receiveStreamDone
+
+
+{-| Handle stream cancellation from websocket.
+-}
+receiveStreamCancelled : Protocol model msg -> Model -> ( model, Cmd msg )
+receiveStreamCancelled =
+    Update.receiveStreamCancelled
 
 
 {-| Handle stream error from websocket.

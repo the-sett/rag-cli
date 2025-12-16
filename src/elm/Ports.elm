@@ -1,4 +1,4 @@
-port module Ports exposing (websocketPorts, pushUrl, onUrlChange)
+port module Ports exposing (websocketPorts, pushUrl, onUrlChange, debugLog)
 
 import Json.Decode exposing (Value)
 import Websocket
@@ -12,6 +12,9 @@ port pushUrl : String -> Cmd msg
 
 
 port onUrlChange : (String -> msg) -> Sub msg
+
+
+port debugLog : String -> Cmd msg
 
 
 

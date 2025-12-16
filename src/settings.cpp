@@ -199,4 +199,22 @@ bool delete_agent(Settings& settings, const std::string& agent_id) {
     return false;
 }
 
+bool delete_chat(Settings& settings, const std::string& chat_id) {
+    auto it = std::find_if(settings.chats.begin(), settings.chats.end(),
+        [&chat_id](const ChatInfo& c) { return c.id == chat_id; });
+
+    if (it != settings.chats.end()) {
+        // Optionally delete the log and json files
+        if (!it->log_file.empty() && fs::exists(it->log_file)) {
+            fs::remove(it->log_file);
+        }
+        if (!it->json_file.empty() && fs::exists(it->json_file)) {
+            fs::remove(it->json_file);
+        }
+        settings.chats.erase(it);
+        return true;
+    }
+    return false;
+}
+
 } // namespace rag

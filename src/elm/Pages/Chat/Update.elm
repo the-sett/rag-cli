@@ -3,6 +3,7 @@ module Pages.Chat.Update exposing
     , update
     , receiveStreamDelta
     , receiveStreamDone
+    , receiveStreamCancelled
     , receiveStreamError
     , receiveHistoryMessage
     , scrollToBottom
@@ -26,6 +27,7 @@ type alias Protocol model msg =
     { toMsg : Msg -> msg
     , onUpdate : ( Model, Cmd msg ) -> ( model, Cmd msg )
     , onSendMessage : String -> ( Model, Cmd msg ) -> ( model, Cmd msg )
+    , onCancelStream : ( Model, Cmd msg ) -> ( model, Cmd msg )
     }
 
 
@@ -40,6 +42,9 @@ update protocol msg model =
 
         SendMessage ->
             sendUserMessage protocol model
+
+        CancelStream ->
+            cancelStream protocol model
 
         ScrollToEntry targetId ->
             ( { model | activeTocEntryId = Just targetId }
@@ -77,6 +82,9 @@ update protocol msg model =
         StreamDone maybeChatId ->
             finalizeStreamingResponse protocol maybeChatId model
 
+        StreamCancelled ->
+            handleStreamCancelled protocol model
+
         StreamError errorMsg ->
             addErrorMessage protocol errorMsg model
 
@@ -100,6 +108,13 @@ receiveStreamDone protocol maybeChatId model =
 receiveStreamError : Protocol model msg -> String -> Model -> ( model, Cmd msg )
 receiveStreamError protocol errorMsg model =
     addErrorMessage protocol errorMsg model
+
+
+{-| Handle stream cancelled from websocket (called from Main).
+-}
+receiveStreamCancelled : Protocol model msg -> Model -> ( model, Cmd msg )
+receiveStreamCancelled protocol model =
+    handleStreamCancelled protocol model
 
 
 {-| Handle history message from websocket (called from Main).
@@ -141,6 +156,7 @@ sendUserMessage protocol model =
             newModel =
                 { model
                     | userInput = ""
+                    , pendingUserInput = Just model.userInput  -- Save for potential cancel
                     , messages = model.messages ++ [ newMessage ]
                     , isWaitingForResponse = True
                     , streamState = ChatMarkBlock.initStreamState
@@ -159,6 +175,97 @@ sendUserMessage protocol model =
     else
         ( model, Cmd.none )
             |> protocol.onUpdate
+
+
+cancelStream : Protocol model msg -> Model -> ( model, Cmd msg )
+cancelStream protocol model =
+    if model.isWaitingForResponse then
+        -- Immediately reset to editing state - don't wait for server confirmation
+        -- Restore the original prompt, remove the user message, and focus input
+        let
+            restoredInput =
+                Maybe.withDefault "" model.pendingUserInput
+
+            -- Remove the last user message (the one we're cancelling)
+            newMessages =
+                List.take (List.length model.messages - 1) model.messages
+
+            -- Remove the last TOC entry (the user query we're cancelling)
+            newTocHistory =
+                List.take (List.length model.tocEntriesHistory - 1) model.tocEntriesHistory
+
+            newModel =
+                { model
+                    | userInput = restoredInput
+                    , pendingUserInput = Nothing
+                    , messages = newMessages
+                    , tocEntriesHistory = newTocHistory
+                    , isWaitingForResponse = False
+                    , streamState = ChatMarkBlock.initStreamState
+                    , tocEntriesStreaming = []
+                }
+
+            focusCmd =
+                Dom.focus "chat-input"
+                    |> Task.attempt (\_ -> InputFocused)
+                    |> Cmd.map protocol.toMsg
+        in
+        ( newModel, focusCmd )
+            |> protocol.onCancelStream
+
+    else
+        ( model, Cmd.none )
+            |> protocol.onUpdate
+
+
+handleStreamCancelled : Protocol model msg -> Model -> ( model, Cmd msg )
+handleStreamCancelled protocol model =
+    -- Keep any partial response that has been streamed so far
+    let
+        partialBlocks =
+            model.streamState.completedBlocks
+
+        pendingText =
+            ChatMarkBlock.getPending model.streamState
+
+        -- If we have some content, add it as a partial message
+        ( newMessages, newTocHistory ) =
+            if not (List.isEmpty partialBlocks) || not (String.isEmpty pendingText) then
+                let
+                    -- Add any pending text as a final block
+                    finalBlocks =
+                        if String.isEmpty pendingText then
+                            partialBlocks
+
+                        else
+                            partialBlocks ++ [ ChatMarkBlock.PendingBlock pendingText ]
+
+                    partialMessage =
+                        { role = "assistant", blocks = finalBlocks }
+
+                    messageIndex =
+                        List.length model.messages
+
+                    tocEntries =
+                        generateTocEntriesForBlocks messageIndex finalBlocks
+                in
+                ( model.messages ++ [ partialMessage ]
+                , model.tocEntriesHistory ++ tocEntries
+                )
+
+            else
+                ( model.messages, model.tocEntriesHistory )
+    in
+    ( { model
+        | isWaitingForResponse = False
+        , streamState = ChatMarkBlock.initStreamState
+        , tocEntriesStreaming = []
+        , messages = newMessages
+        , tocEntriesHistory = newTocHistory
+      }
+    , Cmd.none
+    )
+        |> protocol.onUpdate
 
 
 handleInputKeyDown : Protocol model msg -> Int -> Model -> ( model, Cmd msg )
@@ -219,63 +326,76 @@ cacheElementPosition protocol position model =
 
 processStreamingDelta : Protocol model msg -> String -> Model -> ( model, Cmd msg )
 processStreamingDelta protocol content model =
-    let
-        newStreamState =
-            ChatMarkBlock.feedDelta content model.streamState
+    -- Ignore deltas if we're not waiting for a response (e.g., after cancel)
+    if not model.isWaitingForResponse then
+        ( model, Cmd.none )
+            |> protocol.onUpdate
 
-        streamingMessageIndex =
-            List.length model.messages
+    else
+        let
+            newStreamState =
+                ChatMarkBlock.feedDelta content model.streamState
 
-        newStreamingTocEntries =
-            generateTocEntriesForBlocks streamingMessageIndex newStreamState.completedBlocks
+            streamingMessageIndex =
+                List.length model.messages
 
-        newModel =
-            { model
-                | streamState = newStreamState
-                , tocEntriesStreaming = newStreamingTocEntries
-            }
-    in
-    queryNewTocEntryPositions protocol newModel
+            newStreamingTocEntries =
+                generateTocEntriesForBlocks streamingMessageIndex newStreamState.completedBlocks
+
+            newModel =
+                { model
+                    | streamState = newStreamState
+                    , tocEntriesStreaming = newStreamingTocEntries
+                }
+        in
+        queryNewTocEntryPositions protocol newModel
 
 
 finalizeStreamingResponse : Protocol model msg -> Maybe String -> Model -> ( model, Cmd msg )
 finalizeStreamingResponse protocol maybeChatId model =
-    let
-        finalBlocks =
-            ChatMarkBlock.finishStream model.streamState
+    -- Ignore done messages if we're not waiting for a response (e.g., after cancel)
+    if not model.isWaitingForResponse then
+        ( model, Cmd.none )
+            |> protocol.onUpdate
 
-        assistantMessage =
-            { role = "assistant", blocks = finalBlocks }
+    else
+        let
+            finalBlocks =
+                ChatMarkBlock.finishStream model.streamState
 
-        messageIndex =
-            List.length model.messages
+            assistantMessage =
+                { role = "assistant", blocks = finalBlocks }
 
-        finalTocEntries =
-            generateTocEntriesForBlocks messageIndex finalBlocks
+            messageIndex =
+                List.length model.messages
 
-        newTocEntriesHistory =
-            model.tocEntriesHistory ++ finalTocEntries
+            finalTocEntries =
+                generateTocEntriesForBlocks messageIndex finalBlocks
 
-        -- Update chat ID if provided by server and we don't have one yet
-        newChatId =
-            case ( model.chatId, maybeChatId ) of
-                ( Nothing, Just id ) ->
-                    Just id
+            newTocEntriesHistory =
+                model.tocEntriesHistory ++ finalTocEntries
 
-                ( existing, _ ) ->
-                    existing
+            -- Update chat ID if provided by server and we don't have one yet
+            newChatId =
+                case ( model.chatId, maybeChatId ) of
+                    ( Nothing, Just id ) ->
+                        Just id
 
-        newModel =
-            { model
-                | messages = model.messages ++ [ assistantMessage ]
-                , streamState = ChatMarkBlock.initStreamState
-                , isWaitingForResponse = False
-                , tocEntriesHistory = newTocEntriesHistory
-                , tocEntriesStreaming = []
-                , chatId = newChatId
-            }
-    in
-    queryNewTocEntryPositions protocol newModel
+                    ( existing, _ ) ->
+                        existing
+
+            newModel =
+                { model
+                    | messages = model.messages ++ [ assistantMessage ]
+                    , streamState = ChatMarkBlock.initStreamState
+                    , isWaitingForResponse = False
+                    , pendingUserInput = Nothing  -- Clear saved input on successful completion
+                    , tocEntriesHistory = newTocEntriesHistory
+                    , tocEntriesStreaming = []
+                    , chatId = newChatId
+                }
+        in
+        queryNewTocEntryPositions protocol newModel
 
 
 addErrorMessage : Protocol model msg -> String -> Model -> ( model, Cmd msg )

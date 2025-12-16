@@ -98,6 +98,10 @@ private:
     std::mutex sessions_mutex_;
     std::unordered_map<void*, std::shared_ptr<ChatSession>> sessions_;
 
+    // Per-connection cancel flags (for cancelling ongoing streams)
+    std::mutex cancel_flags_mutex_;
+    std::unordered_map<void*, std::shared_ptr<std::atomic<bool>>> cancel_flags_;
+
     // Handles an incoming message from a client
     void handle_message(void* conn_id, ix::WebSocket& ws, const std::string& message);
 
@@ -110,7 +114,7 @@ private:
     void send_history(ix::WebSocket& ws, std::shared_ptr<ChatSession> session);
 
     // Processes a query and streams the response
-    void process_query(ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
+    void process_query(void* conn_id, ix::WebSocket& ws, std::shared_ptr<ChatSession> session,
                        const std::string& content, bool hidden);
 
     // Sends a JSON message to a client

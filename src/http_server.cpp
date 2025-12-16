@@ -78,6 +78,28 @@ bool HttpServer::start(const std::string& address, int port) {
         res.set_content(chat_json.dump(), "application/json");
     });
 
+    // REST API: Delete a chat
+    svr.Delete(R"(/api/chats/([^/]+))", [this](const httplib::Request& req, httplib::Response& res) {
+        std::string chat_id = req.matches[1];
+        verbose_in("HTTP", "DELETE /api/chats/" + chat_id);
+        res.set_header("Content-Type", "application/json");
+
+        if (!settings_) {
+            res.status = 500;
+            res.set_content(R"({"error": "Settings not available"})", "application/json");
+            return;
+        }
+
+        if (delete_chat(*settings_, chat_id)) {
+            save_settings(*settings_);
+            verbose_out("HTTP", "Deleted chat: " + chat_id);
+            res.set_content(R"({"success": true})", "application/json");
+        } else {
+            res.status = 404;
+            res.set_content(R"({"error": "Chat not found"})", "application/json");
+        }
+    });
+
     // REST API: Get agent list
     svr.Get("/api/agents", [this](const httplib::Request& req, httplib::Response& res) {
         verbose_in("HTTP", "GET /api/agents");

@@ -40,3 +40,10 @@ const app = Elm.Main.init({ node: appNode, flags: flags });
 // Initialize ports
 new NavigationPorts(app);
 new WebsocketPorts(app);
+
+// Debug logging port
+if (app.ports.debugLog) {
+  app.ports.debugLog.subscribe((msg: string) => {
+    console.log("[Elm Debug]", msg);
+  });
+}

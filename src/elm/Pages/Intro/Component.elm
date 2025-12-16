@@ -40,6 +40,7 @@ init =
       , loadingChats = False
       , loadingAgents = False
       , error = Nothing
+      , deletingChatId = Nothing
       }
     , Cmd.none
     )

@@ -82,6 +82,45 @@ update protocol msg model =
                     )
                         |> protocol.onUpdate
 
+        RequestDeleteChat chatId ->
+            ( { model | deletingChatId = Just chatId }
+            , Cmd.none
+            )
+                |> protocol.onUpdate
+
+        ConfirmDeleteChat ->
+            case model.deletingChatId of
+                Just chatId ->
+                    ( { model | deletingChatId = Nothing }
+                    , deleteChat protocol.toMsg chatId
+                    )
+                        |> protocol.onUpdate
+
+                Nothing ->
+                    ( model, Cmd.none )
+                        |> protocol.onUpdate
+
+        CancelDeleteChat ->
+            ( { model | deletingChatId = Nothing }
+            , Cmd.none
+            )
+                |> protocol.onUpdate
+
+        ChatDeleted result ->
+            case result of
+                Ok _ ->
+                    -- Refresh the chat list after deletion
+                    ( { model | loadingChats = True }
+                    , fetchChats protocol.toMsg
+                    )
+                        |> protocol.onUpdate
+
+                Err _ ->
+                    ( { model | error = Just "Failed to delete chat" }
+                    , Cmd.none
+                    )
+                        |> protocol.onUpdate
+
 
 {-| Fetch the chat list from the server.
 -}
@@ -100,6 +139,21 @@ fetchAgents toMsg =
     Http.get
         { url = "/api/agents"
         , expect = Http.expectJson (toMsg << GotAgents) agentsDecoder
+        }
+
+
+{-| Delete a chat by ID.
+-}
+deleteChat : (Msg -> msg) -> String -> Cmd msg
+deleteChat toMsg chatId =
+    Http.request
+        { method = "DELETE"
+        , headers = []
+        , url = "/api/chats/" ++ chatId
+        , body = Http.emptyBody
+        , expect = Http.expectWhatever (toMsg << ChatDeleted)
+        , timeout = Nothing
+        , tracker = Nothing
         }
 
 

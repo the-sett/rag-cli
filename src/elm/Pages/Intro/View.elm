@@ -6,6 +6,7 @@ module Pages.Intro.View exposing (Actions, view)
 import Html.Styled as HS exposing (Html)
 import Html.Styled.Attributes as HA
 import Html.Styled.Events as HE
+import Json.Decode as Decode
 import Pages.Intro.Model exposing (AgentInfo, ChatInfo, Model)
 import Pages.Intro.Msg exposing (Msg(..))
 
@@ -50,6 +51,7 @@ view actions model =
             [ viewChatList actions model
             , viewAgentList actions model
             ]
+        , viewDeleteConfirmModal actions model
         ]
 
 
@@ -88,11 +90,21 @@ viewChatItem actions chat =
         , HE.onClick (actions.toMsg (SelectChat chat.id))
         ]
         [ HS.div
-            [ HA.class "intro-item-title" ]
-            [ HS.text (displayTitle chat.title) ]
-        , HS.div
-            [ HA.class "intro-item-date" ]
-            [ HS.text (formatDate chat.createdAt) ]
+            [ HA.class "intro-item-content" ]
+            [ HS.div
+                [ HA.class "intro-item-title" ]
+                [ HS.text (displayTitle chat.title) ]
+            , HS.div
+                [ HA.class "intro-item-date" ]
+                [ HS.text (formatDate chat.createdAt) ]
+            ]
+        , HS.button
+            [ HA.class "intro-delete-button"
+            , HE.stopPropagationOn "click"
+                (Decode.succeed ( actions.toMsg (RequestDeleteChat chat.id), True ))
+            , HA.title "Delete chat"
+            ]
+            [ HS.text "\u{1F5D1}" ]
         ]
 
 
@@ -158,3 +170,55 @@ formatDate dateStr =
     -- Simple formatting: just show the date part
     -- Full date: "2024-12-07T14:30:22"
     String.left 10 dateStr
+
+
+{-| Render the delete confirmation modal.
+-}
+viewDeleteConfirmModal : Actions msg -> Model -> Html msg
+viewDeleteConfirmModal actions model =
+    case model.deletingChatId of
+        Nothing ->
+            HS.text ""
+
+        Just chatId ->
+            let
+                chatTitle =
+                    model.chats
+                        |> List.filter (\c -> c.id == chatId)
+                        |> List.head
+                        |> Maybe.map .title
+                        |> Maybe.withDefault "(Untitled)"
+                        |> displayTitle
+            in
+            HS.div
+                [ HA.class "modal-overlay"
+                , HE.onClick (actions.toMsg CancelDeleteChat)
+                ]
+                [ HS.div
+                    [ HA.class "modal-content"
+                    , HE.stopPropagationOn "click" (Decode.succeed ( actions.toMsg CancelDeleteChat, False ))
+                    ]
+                    [ HS.h3
+                        [ HA.class "modal-title" ]
+                        [ HS.text "Delete Chat" ]
+                    , HS.p
+                        [ HA.class "modal-message" ]
+                        [ HS.text "Are you sure you want to delete \""
+                        , HS.text chatTitle
+                        , HS.text "\"?"
+                        ]
+                    , HS.div
+                        [ HA.class "modal-buttons" ]
+                        [ HS.button
+                            [ HA.class "modal-cancel-button"
+                            , HE.onClick (actions.toMsg CancelDeleteChat)
+                            ]
+                            [ HS.text "Cancel" ]
+                        , HS.button
+                            [ HA.class "modal-delete-button"
+                            , HE.onClick (actions.toMsg ConfirmDeleteChat)
+                            ]
+                            [ HS.text "Delete" ]
+                        ]
+                    ]
+                ]

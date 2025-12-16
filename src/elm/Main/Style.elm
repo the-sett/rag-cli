@@ -463,7 +463,10 @@ introStyles =
         , Css.overflowY Css.auto
         ]
     , Css.Global.class "intro-list-item"
-        [ Css.padding2 space1 space2
+        [ Css.displayFlex
+        , Css.alignItems Css.center
+        , Css.property "gap" "0.5rem"
+        , Css.padding2 space1 space2
         , Css.marginBottom space1
         , Css.backgroundColor colorBackground
         , Css.borderRadius (Css.px 4)
@@ -484,10 +487,99 @@ introStyles =
             [ Css.fontSize (Css.rem 1)
             ]
         ]
+    , Css.Global.class "intro-item-content"
+        [ Css.flex (Css.int 1)
+        , Css.minWidth Css.zero
+        ]
     , Css.Global.class "intro-item-date"
         [ Css.fontSize (Css.rem 0.75)
         , Css.color colorTextSecondary
         , Css.marginTop (Css.rem 0.125)
+        ]
+
+    -- Delete button for chat items
+    , Css.Global.class "intro-delete-button"
+        [ Css.padding2 (Css.px 4) (Css.px 8)
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.backgroundColor Css.transparent
+        , Css.cursor Css.pointer
+        , Css.fontSize (Css.rem 1)
+        , Css.lineHeight (Css.num 1)
+        , Css.opacity (Css.num 0.5)
+        , Css.property "transition" "opacity 0.2s, background-color 0.2s"
+        , Css.flexShrink Css.zero
+        , Css.hover
+            [ Css.opacity (Css.num 1)
+            , Css.backgroundColor colorBackgroundTertiary
+            ]
+        ]
+
+    -- Modal styles
+    , Css.Global.class "modal-overlay"
+        [ Css.position Css.fixed
+        , Css.top Css.zero
+        , Css.left Css.zero
+        , Css.right Css.zero
+        , Css.bottom Css.zero
+        , Css.backgroundColor (Css.rgba 0 0 0 0.5)
+        , Css.displayFlex
+        , Css.alignItems Css.center
+        , Css.justifyContent Css.center
+        , Css.property "z-index" "1000"
+        ]
+    , Css.Global.class "modal-content"
+        [ Css.backgroundColor colorBackground
+        , Css.borderRadius (Css.px 8)
+        , Css.padding space3
+        , Css.maxWidth (Css.px 400)
+        , Css.width (Css.pct 90)
+        , Css.boxShadow5 Css.zero (Css.px 4) (Css.px 20) Css.zero (Css.rgba 0 0 0 0.2)
+        ]
+    , Css.Global.class "modal-title"
+        [ Css.fontSize (Css.rem 1.25)
+        , Css.fontWeight (Css.int 700)
+        , Css.color colorText
+        , Css.margin4 Css.zero Css.zero space2 Css.zero
+        ]
+    , Css.Global.class "modal-message"
+        [ Css.fontSize (Css.rem 1)
+        , Css.color colorText
+        , Css.margin4 Css.zero Css.zero space3 Css.zero
+        , Css.lineHeight (Css.num 1.5)
+        ]
+    , Css.Global.class "modal-buttons"
+        [ Css.displayFlex
+        , Css.justifyContent Css.flexEnd
+        , Css.property "gap" "1rem"
+        ]
+    , Css.Global.class "modal-cancel-button"
+        [ Css.padding2 space1 space2
+        , Css.fontSize (Css.rem 1)
+        , Css.fontWeight (Css.int 500)
+        , Css.color colorText
+        , Css.backgroundColor colorBackgroundSecondary
+        , Css.border3 (Css.px 1) Css.solid colorBorder
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBackgroundTertiary
+            ]
+        ]
+    , Css.Global.class "modal-delete-button"
+        [ Css.padding2 space1 space2
+        , Css.fontSize (Css.rem 1)
+        , Css.fontWeight (Css.int 500)
+        , Css.color colorBackground
+        , Css.backgroundColor colorNegative
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor (Css.hex "b01c04")
+            ]
         ]
     ]
 
