@@ -76,38 +76,39 @@ std::string create_vector_store(
     }
 
     console.println();
-    console.print_warning("Uploading " + std::to_string(files_to_upload.size()) + " files...");
+    console.print_warning("Uploading " + std::to_string(files_to_upload.size()) + " files (8 parallel connections)...");
 
     std::vector<std::string> file_ids;
-    size_t total_files = files_to_upload.size();
 
     // Clear any existing indexed files since we're creating fresh
     indexed_files.clear();
 
-    for (size_t i = 0; i < files_to_upload.size(); ++i) {
-        const auto& filepath = files_to_upload[i];
-        std::string display_name = fs::path(filepath).filename().string();
+    // Upload files in parallel
+    auto results = client.upload_files_parallel(
+        files_to_upload,
+        [&console](size_t completed, size_t total) {
+            console.start_status("Uploading (" + std::to_string(completed) + "/" +
+                                std::to_string(total) + ")...");
+        },
+        8  // max parallel connections
+    );
 
-        console.start_status("Uploading (" + std::to_string(i + 1) + "/" +
-                            std::to_string(total_files) + "): " + display_name);
+    console.clear_status();
 
-        try {
-            std::string file_id = client.upload_file(filepath);
-            file_ids.push_back(file_id);
+    // Process results
+    for (const auto& result : results) {
+        if (result.success()) {
+            file_ids.push_back(result.file_id);
 
             // Record the file metadata
             FileMetadata metadata;
-            metadata.openai_file_id = file_id;
-            metadata.last_modified = get_file_mtime(filepath);
-            indexed_files[filepath] = metadata;
+            metadata.openai_file_id = result.file_id;
+            metadata.last_modified = get_file_mtime(result.filepath);
+            indexed_files[result.filepath] = metadata;
 
-            console.clear_status();
-            console.print_success("(" + std::to_string(i + 1) + "/" +
-                                 std::to_string(total_files) + ") " + filepath);
-        } catch (const std::exception& e) {
-            console.clear_status();
-            console.print_warning("Skipping " + filepath + ": " + e.what());
-            // Continue with other files instead of stopping
+            console.print_success(result.filepath);
+        } else {
+            console.print_warning("Skipping " + result.filepath + ": " + result.error);
         }
     }
 

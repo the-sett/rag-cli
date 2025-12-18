@@ -15,6 +15,16 @@
 namespace rag {
 
 /**
+ * Result of a single file upload in a parallel batch.
+ */
+struct UploadResult {
+    std::string filepath;      // Original file path
+    std::string file_id;       // OpenAI file ID (empty on error)
+    std::string error;         // Error message (empty on success)
+    bool success() const { return !file_id.empty(); }
+};
+
+/**
  * A chat message with role and content.
  */
 struct Message {
@@ -62,6 +72,14 @@ public:
 
     // Uploads a file for use with assistants. Returns the file ID.
     std::string upload_file(const std::string& filepath);
+
+    // Uploads multiple files in parallel using curl_multi.
+    // Uses up to max_parallel concurrent connections (default 8).
+    // Returns results for all files, including any errors.
+    std::vector<UploadResult> upload_files_parallel(
+        const std::vector<std::string>& filepaths,
+        std::function<void(size_t completed, size_t total)> on_progress = nullptr,
+        size_t max_parallel = 8);
 
     // Deletes a file from OpenAI storage.
     void delete_file(const std::string& file_id);

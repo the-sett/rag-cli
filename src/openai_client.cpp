@@ -6,6 +6,9 @@
 #include <algorithm>
 #include <sstream>
 #include <filesystem>
+#include <map>
+#include <queue>
+#include <memory>
 
 namespace rag {
 
@@ -343,6 +346,222 @@ std::string OpenAIClient::upload_file(const std::string& filepath) {
     }
 
     return j.value("id", "");
+}
+
+// Context for tracking each upload in the multi handle
+struct MultiUploadContext {
+    std::string filepath;
+    std::string display_filename;  // For retry with .txt extension
+    std::string response;
+    CURL* easy;
+    curl_mime* mime;
+    curl_slist* headers;
+    bool needs_retry;  // Set true if we need to retry with .txt extension
+};
+
+std::vector<UploadResult> OpenAIClient::upload_files_parallel(
+    const std::vector<std::string>& filepaths,
+    std::function<void(size_t completed, size_t total)> on_progress,
+    size_t max_parallel
+) {
+    if (filepaths.empty()) {
+        return {};
+    }
+
+    std::string url = std::string(OPENAI_API_BASE) + "/files";
+    std::vector<UploadResult> results;
+    results.reserve(filepaths.size());
+
+    // Initialize results with empty entries
+    for (const auto& fp : filepaths) {
+        results.push_back({fp, "", ""});
+    }
+
+    // Create multi handle
+    CURLM* multi = curl_multi_init();
+    if (!multi) {
+        throw std::runtime_error("Failed to initialize CURL multi handle");
+    }
+
+    // Track active uploads: maps easy handle to (result_index, context)
+    std::map<CURL*, std::pair<size_t, std::unique_ptr<MultiUploadContext>>> active;
+
+    // Queue of file indices still to upload
+    std::queue<size_t> pending;
+    for (size_t i = 0; i < filepaths.size(); ++i) {
+        pending.push(i);
+    }
+
+    size_t completed = 0;
+
+    // Lambda to start a new upload
+    auto start_upload = [&](size_t index, const std::string& display_filename = "") {
+        const std::string& filepath = filepaths[index];
+
+        auto ctx = std::make_unique<MultiUploadContext>();
+        ctx->filepath = filepath;
+        ctx->display_filename = display_filename;
+        ctx->needs_retry = false;
+
+        CURL* easy = curl_easy_init();
+        if (!easy) {
+            results[index].error = "Failed to initialize CURL";
+            return;
+        }
+
+        ctx->easy = easy;
+        ctx->headers = nullptr;
+        std::string auth_header = "Authorization: Bearer " + api_key_;
+        ctx->headers = curl_slist_append(ctx->headers, auth_header.c_str());
+
+        ctx->mime = curl_mime_init(easy);
+
+        // Add file part
+        curl_mimepart* part = curl_mime_addpart(ctx->mime);
+        curl_mime_name(part, "file");
+        curl_mime_filedata(part, filepath.c_str());
+
+        // Override filename if retrying with .txt extension
+        if (!display_filename.empty()) {
+            curl_mime_filename(part, display_filename.c_str());
+        }
+
+        // Add purpose part
+        part = curl_mime_addpart(ctx->mime);
+        curl_mime_name(part, "purpose");
+        curl_mime_data(part, "assistants", CURL_ZERO_TERMINATED);
+
+        curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(easy, CURLOPT_HTTPHEADER, ctx->headers);
+        curl_easy_setopt(easy, CURLOPT_MIMEPOST, ctx->mime);
+        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(easy, CURLOPT_WRITEDATA, &ctx->response);
+
+        if (is_verbose()) {
+            curl_easy_setopt(easy, CURLOPT_VERBOSE, 1L);
+        }
+
+        curl_multi_add_handle(multi, easy);
+        active[easy] = {index, std::move(ctx)};
+
+        verbose_log("CURL", "Started parallel upload: " + filepath);
+    };
+
+    // Start initial batch of uploads
+    while (!pending.empty() && active.size() < max_parallel) {
+        size_t idx = pending.front();
+        pending.pop();
+        start_upload(idx);
+    }
+
+    // Main event loop
+    int still_running = 1;
+    while (still_running > 0 || !pending.empty()) {
+        // Perform transfers
+        CURLMcode mc = curl_multi_perform(multi, &still_running);
+        if (mc != CURLM_OK) {
+            verbose_err("CURL", std::string("curl_multi_perform failed: ") + curl_multi_strerror(mc));
+            break;
+        }
+
+        // Check for completed transfers
+        int msgs_left;
+        CURLMsg* msg;
+        while ((msg = curl_multi_info_read(multi, &msgs_left))) {
+            if (msg->msg == CURLMSG_DONE) {
+                CURL* easy = msg->easy_handle;
+                auto it = active.find(easy);
+                if (it == active.end()) continue;
+
+                size_t idx = it->second.first;
+                auto& ctx = it->second.second;
+
+                // Remove from multi handle
+                curl_multi_remove_handle(multi, easy);
+
+                // Check result
+                CURLcode res = msg->data.result;
+                if (res != CURLE_OK) {
+                    results[idx].error = curl_easy_strerror(res);
+                } else {
+                    // Parse response
+                    try {
+                        json j = json::parse(ctx->response);
+                        if (j.contains("error")) {
+                            std::string error_msg = j["error"]["message"].get<std::string>();
+
+                            // Check if it's an extension error and we haven't retried yet
+                            if (error_msg.find("Invalid extension") != std::string::npos &&
+                                ctx->display_filename.empty()) {
+                                // Mark for retry with .txt extension
+                                ctx->needs_retry = true;
+                            } else {
+                                results[idx].error = error_msg;
+                            }
+                        } else {
+                            results[idx].file_id = j.value("id", "");
+                            if (results[idx].file_id.empty()) {
+                                results[idx].error = "No file ID in response";
+                            }
+                        }
+                    } catch (const json::exception& e) {
+                        results[idx].error = std::string("JSON parse error: ") + e.what();
+                    }
+                }
+
+                bool needs_retry = ctx->needs_retry;
+                std::string filepath = ctx->filepath;
+
+                // Cleanup this context
+                curl_mime_free(ctx->mime);
+                curl_slist_free_all(ctx->headers);
+                curl_easy_cleanup(easy);
+                active.erase(it);
+
+                // Handle retry or completion
+                if (needs_retry) {
+                    // Retry with .txt extension
+                    std::string filename = std::filesystem::path(filepath).filename().string();
+                    std::string txt_filename = filename + ".txt";
+                    verbose_log("CURL", "Retrying with .txt extension: " + filepath);
+                    start_upload(idx, txt_filename);
+                } else {
+                    // Upload complete
+                    completed++;
+                    if (on_progress) {
+                        on_progress(completed, filepaths.size());
+                    }
+                    verbose_log("CURL", "Completed upload: " + filepath +
+                               (results[idx].success() ? " -> " + results[idx].file_id : " (error)"));
+
+                    // Start next pending upload if any
+                    if (!pending.empty() && active.size() < max_parallel) {
+                        size_t next_idx = pending.front();
+                        pending.pop();
+                        start_upload(next_idx);
+                    }
+                }
+            }
+        }
+
+        // Wait for activity (with timeout to avoid spinning)
+        if (still_running > 0) {
+            curl_multi_wait(multi, nullptr, 0, 100, nullptr);
+        }
+    }
+
+    // Cleanup any remaining active handles (shouldn't happen normally)
+    for (auto& [easy, pair] : active) {
+        auto& ctx = pair.second;
+        curl_multi_remove_handle(multi, easy);
+        curl_mime_free(ctx->mime);
+        curl_slist_free_all(ctx->headers);
+        curl_easy_cleanup(easy);
+    }
+
+    curl_multi_cleanup(multi);
+
+    return results;
 }
 
 std::string OpenAIClient::create_vector_store(const std::string& name) {
