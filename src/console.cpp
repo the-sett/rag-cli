@@ -96,15 +96,20 @@ void Console::print_colored(const std::string& text, const char* color) const {
 
 void Console::start_status(const std::string& message) const {
     if (colors_enabled_) {
-        std::cout << ansi::YELLOW << message << ansi::RESET << std::flush;
+        // Return to start of line, print message, clear to end of line
+        std::cout << "\r" << ansi::YELLOW << message << ansi::RESET << "\033[K" << std::flush;
     } else {
-        std::cout << message << std::flush;
+        // Dumb terminal: just print with newline
+        std::cout << message << std::endl;
     }
 }
 
 void Console::clear_status() const {
-    // Move to beginning of line and clear it
-    std::cout << "\r\033[K" << std::flush;
+    if (colors_enabled_) {
+        // Move to beginning of line and clear it
+        std::cout << "\r\033[K" << std::flush;
+    }
+    // On dumb terminals, nothing to clear (each status was on its own line)
 }
 
 std::string Console::prompt(const std::string& message, const std::string& default_value) const {
