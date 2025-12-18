@@ -56,6 +56,20 @@ struct AgentInfo {
 };
 
 /**
+ * Submit shortcut mode for the web interface.
+ * Controls how Enter key behaves in the query input.
+ */
+enum class SubmitShortcut {
+    EnterOnce,       // Single Enter submits
+    ShiftEnter,      // Shift+Enter submits
+    EnterTwice       // Double Enter (quick succession) submits
+};
+
+// Convert SubmitShortcut to/from string for JSON serialization
+std::string submit_shortcut_to_string(SubmitShortcut mode);
+SubmitShortcut submit_shortcut_from_string(const std::string& str);
+
+/**
  * Application settings stored in .crag.json.
  *
  * Contains model configuration, vector store reference, and metadata for
@@ -69,6 +83,7 @@ struct Settings {
     std::map<std::string, FileMetadata> indexed_files;    // Filepath to metadata mapping.
     std::vector<ChatInfo> chats;                          // Chat session history.
     std::vector<AgentInfo> agents;                        // Agent definitions.
+    SubmitShortcut submit_shortcut = SubmitShortcut::EnterOnce;  // Query submit shortcut mode.
 
     // Returns true if settings contain required fields for operation.
     bool is_valid() const {

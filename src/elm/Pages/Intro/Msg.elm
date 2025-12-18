@@ -22,3 +22,4 @@ type Msg
     | ConfirmDeleteChat
     | CancelDeleteChat
     | ChatDeleted (Result Http.Error ())
+    | OpenSettings

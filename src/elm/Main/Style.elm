@@ -351,6 +351,7 @@ introStyles =
         [ Css.textAlign Css.center
         , Css.padding2 space3 space4
         , Css.flexShrink Css.zero
+        , Css.position Css.relative
         ]
     , Css.Global.class "intro-title"
         [ Css.fontSize (Css.rem 2)
@@ -580,6 +581,98 @@ introStyles =
         , Css.hover
             [ Css.backgroundColor (Css.hex "b01c04")
             ]
+        ]
+    , Css.Global.class "modal-save-button"
+        [ Css.padding2 space1 space2
+        , Css.fontSize (Css.rem 1)
+        , Css.fontWeight (Css.int 500)
+        , Css.color colorBackground
+        , Css.backgroundColor colorBrand
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBrandHover
+            ]
+        ]
+
+    -- Settings button styles
+    , Css.Global.class "settings-button"
+        [ Css.position Css.absolute
+        , Css.top space2
+        , Css.right space2
+        , Css.padding2 (Css.px 4) (Css.px 8)
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.backgroundColor Css.transparent
+        , Css.cursor Css.pointer
+        , Css.fontSize (Css.rem 1.5)
+        , Css.lineHeight (Css.num 1)
+        , Css.color colorTextSecondary
+        , Css.property "transition" "color 0.2s, background-color 0.2s"
+        , Css.hover
+            [ Css.color colorText
+            , Css.backgroundColor colorBackgroundTertiary
+            ]
+        ]
+    , Css.Global.class "settings-button-sidebar"
+        [ Css.padding2 Css.zero (Css.px 6)
+        , Css.cursor Css.pointer
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.backgroundColor Css.transparent
+        , Css.color colorTextSecondary
+        , Css.fontFamilies fontStack
+        , Css.fontSize (Css.rem 1.25)
+        , Css.lineHeight (Css.num 1)
+        , Css.property "transition" "color 0.2s, background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBackgroundSecondary
+            , Css.color colorText
+            ]
+        ]
+
+    -- Settings form styles
+    , Css.Global.class "settings-form"
+        [ Css.margin4 Css.zero Css.zero space3 Css.zero
+        ]
+    , Css.Global.class "settings-label"
+        [ Css.fontSize (Css.rem 1)
+        , Css.fontWeight (Css.int 600)
+        , Css.color colorText
+        , Css.margin4 Css.zero Css.zero space1 Css.zero
+        , Css.display Css.block
+        ]
+    , Css.Global.class "settings-radio-group"
+        [ Css.displayFlex
+        , Css.flexDirection Css.column
+        , Css.property "gap" "0.5rem"
+        ]
+    , Css.Global.class "settings-radio-option"
+        [ Css.displayFlex
+        , Css.alignItems Css.center
+        , Css.property "gap" "0.5rem"
+        , Css.padding space1
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBackgroundSecondary
+            ]
+        ]
+    , Css.Global.class "settings-radio-option-selected"
+        [ Css.backgroundColor colorBackgroundTertiary
+        ]
+    , Css.Global.class "settings-radio-input"
+        [ Css.width (Css.px 18)
+        , Css.height (Css.px 18)
+        , Css.margin Css.zero
+        , Css.cursor Css.pointer
+        ]
+    , Css.Global.class "settings-radio-text"
+        [ Css.fontSize (Css.rem 1)
+        , Css.color colorText
         ]
     ]
 
@@ -1019,11 +1112,13 @@ inputStyles =
     -- Textarea - full width, no borders, monospace font
     -- Has bottom padding to reserve space for toolbar (always present to keep height stable)
     -- Uses field-sizing: content to auto-grow with wrapped text
+    -- Max height is 2/3 of viewport, scrollbar appears when exceeded
+    -- scroll-padding-bottom keeps cursor visible above the toolbar when scrolling
     , Css.Global.class "input-textarea"
         [ Css.width (Css.pct 100)
         , Css.property "box-sizing" "border-box"
         , Css.padding space2
-        , Css.paddingBottom (Css.rem 2)
+        , Css.paddingBottom (Css.rem 2.5)
         , Css.border Css.zero
         , Css.fontSize (Css.rem 1)
         , Css.lineHeight (Css.num 1.5)
@@ -1034,6 +1129,9 @@ inputStyles =
         , Css.outline Css.none
         , Css.property "field-sizing" "content"
         , Css.minHeight (Css.rem 2.5)
+        , Css.maxHeight (Css.vh 66)
+        , Css.overflowY Css.auto
+        , Css.property "scroll-padding-bottom" "2.5rem"
         , mediaMedium
             [ Css.fontSize (Css.rem 1.1875)
             , Css.lineHeight (Css.num 1.68)

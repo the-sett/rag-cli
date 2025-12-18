@@ -10,6 +10,21 @@ namespace rag {
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+std::string submit_shortcut_to_string(SubmitShortcut mode) {
+    switch (mode) {
+        case SubmitShortcut::EnterOnce: return "enter_once";
+        case SubmitShortcut::ShiftEnter: return "shift_enter";
+        case SubmitShortcut::EnterTwice: return "enter_twice";
+        default: return "enter_once";
+    }
+}
+
+SubmitShortcut submit_shortcut_from_string(const std::string& str) {
+    if (str == "shift_enter") return SubmitShortcut::ShiftEnter;
+    if (str == "enter_twice") return SubmitShortcut::EnterTwice;
+    return SubmitShortcut::EnterOnce;  // Default
+}
+
 std::optional<Settings> load_settings() {
     if (!std::filesystem::exists(SETTINGS_FILE)) {
         return std::nullopt;
@@ -75,6 +90,11 @@ std::optional<Settings> load_settings() {
             }
         }
 
+        // Load submit shortcut setting
+        if (j.contains("submit_shortcut") && j["submit_shortcut"].is_string()) {
+            settings.submit_shortcut = submit_shortcut_from_string(j["submit_shortcut"].get<std::string>());
+        }
+
         return settings;
     } catch (const json::exception&) {
         return std::nullopt;
@@ -124,6 +144,9 @@ void save_settings(const Settings& settings) {
         });
     }
     j["agents"] = agents_json;
+
+    // Save submit shortcut setting
+    j["submit_shortcut"] = submit_shortcut_to_string(settings.submit_shortcut);
 
     std::ofstream file(SETTINGS_FILE);
     if (file.is_open()) {

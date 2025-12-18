@@ -18,6 +18,7 @@ type alias Protocol model msg =
     , onSelectChat : String -> ( Model, Cmd msg ) -> ( model, Cmd msg )
     , onSelectAgentChat : String -> ( Model, Cmd msg ) -> ( model, Cmd msg )
     , onGoToAgents : ( Model, Cmd msg ) -> ( model, Cmd msg )
+    , onOpenSettings : ( Model, Cmd msg ) -> ( model, Cmd msg )
     }
 
 
@@ -120,6 +121,10 @@ update protocol msg model =
                     , Cmd.none
                     )
                         |> protocol.onUpdate
+
+        OpenSettings ->
+            ( model, Cmd.none )
+                |> protocol.onOpenSettings
 
 
 {-| Fetch the chat list from the server.

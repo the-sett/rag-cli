@@ -26,7 +26,13 @@ view actions model =
         [ HA.class "intro-page" ]
         [ HS.div
             [ HA.class "intro-header" ]
-            [ HS.h1
+            [ HS.button
+                [ HA.class "settings-button"
+                , HE.onClick (actions.toMsg OpenSettings)
+                , HA.title "Settings"
+                ]
+                [ HS.text "\u{2699}" ]
+            , HS.h1
                 [ HA.class "intro-title" ]
                 [ HS.text "CRAG" ]
             , HS.p

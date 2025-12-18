@@ -196,6 +196,59 @@ bool HttpServer::start(const std::string& address, int port) {
         }
     });
 
+    // REST API: Get app settings (submit shortcut, etc.)
+    svr.Get("/api/settings", [this](const httplib::Request& req, httplib::Response& res) {
+        verbose_in("HTTP", "GET /api/settings");
+        res.set_header("Content-Type", "application/json");
+
+        if (!settings_) {
+            res.status = 500;
+            res.set_content(R"({"error": "Settings not available"})", "application/json");
+            return;
+        }
+
+        json settings_json = {
+            {"submit_shortcut", submit_shortcut_to_string(settings_->submit_shortcut)}
+        };
+
+        verbose_out("HTTP", "Response: " + settings_json.dump());
+        res.set_content(settings_json.dump(), "application/json");
+    });
+
+    // REST API: Update app settings
+    svr.Put("/api/settings", [this](const httplib::Request& req, httplib::Response& res) {
+        verbose_in("HTTP", "PUT /api/settings: " + truncate(req.body, 200));
+        res.set_header("Content-Type", "application/json");
+
+        if (!settings_) {
+            res.status = 500;
+            res.set_content(R"({"error": "Settings not available"})", "application/json");
+            return;
+        }
+
+        try {
+            json body = json::parse(req.body);
+
+            // Update submit shortcut if provided
+            if (body.contains("submit_shortcut") && body["submit_shortcut"].is_string()) {
+                settings_->submit_shortcut = submit_shortcut_from_string(body["submit_shortcut"].get<std::string>());
+            }
+
+            save_settings(*settings_);
+
+            json response = {
+                {"submit_shortcut", submit_shortcut_to_string(settings_->submit_shortcut)}
+            };
+
+            verbose_out("HTTP", "Updated settings: " + response.dump());
+            res.set_content(response.dump(), "application/json");
+
+        } catch (const json::exception& e) {
+            res.status = 400;
+            res.set_content(R"({"error": "Invalid JSON"})", "application/json");
+        }
+    });
+
     if (use_embedded_) {
         // Serve from embedded resources
         if (!embedded_resources_ || !embedded_resources_->is_valid()) {

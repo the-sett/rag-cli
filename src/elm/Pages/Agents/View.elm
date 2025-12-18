@@ -9,6 +9,7 @@ import Html.Styled.Events as HE
 import Json.Decode as Decode
 import Pages.Agents.Model exposing (AgentInfo, Model)
 import Pages.Agents.Msg exposing (Msg(..))
+import Settings exposing (SubmitShortcut(..))
 
 
 {-| Actions provided by the parent for the view.
@@ -17,6 +18,8 @@ type alias Actions msg =
     { toMsg : Msg -> msg
     , isConnected : Bool
     , onGoHome : msg
+    , onOpenSettings : msg
+    , submitShortcut : SubmitShortcut
     }
 
 
@@ -82,6 +85,12 @@ viewConnectionStatus actions =
             , HA.title "Back to Home"
             ]
             [ HS.text "\u{2302}" ]
+        , HS.button
+            [ HA.class "settings-button-sidebar"
+            , HE.onClick actions.onOpenSettings
+            , HA.title "Settings"
+            ]
+            [ HS.text "\u{2699}" ]  -- Unicode gear symbol
         , HS.div
             [ HA.class "status-indicator"
             , HA.class statusClass
@@ -144,6 +153,17 @@ viewAgentEditor actions model =
 
                 Nothing ->
                     "New Agent"
+
+        placeholderText =
+            case actions.submitShortcut of
+                EnterOnce ->
+                    "Enter agent instructions... (first line becomes the name, press Enter to save)"
+
+                ShiftEnter ->
+                    "Enter agent instructions... (first line becomes the name, press Shift+Enter to save)"
+
+                EnterTwice ->
+                    "Enter agent instructions... (first line becomes the name, press Enter twice to save)"
     in
     HS.div
         [ HA.class "agent-editor" ]
@@ -171,7 +191,7 @@ viewAgentEditor actions model =
                     , HE.onFocus (actions.toMsg InputFocused)
                     , HE.onBlur (actions.toMsg InputBlurred)
                     , HE.preventDefaultOn "keydown" (enterKeyDecoder actions model.lastEnterTime)
-                    , HA.placeholder "Enter agent instructions... (first line becomes the name, press Enter twice to save)"
+                    , HA.placeholder placeholderText
                     , HA.disabled isDisabled
                     ]
                     []
@@ -198,13 +218,45 @@ viewAgentEditor actions model =
 enterKeyDecoder : Actions msg -> Int -> Decode.Decoder ( msg, Bool )
 enterKeyDecoder actions lastEnterTime =
     let
-        decodeIfEnter key =
-            if key == "Enter" then
-                Decode.field "timeStamp" Decode.float
-                    |> Decode.map toMsgWithPreventDefault
+        decodeKey key shiftKey altKey =
+            case actions.submitShortcut of
+                EnterOnce ->
+                    -- Enter submits, Shift+Enter or Alt+Enter inserts newline
+                    if key == "Enter" then
+                        if shiftKey || altKey then
+                            -- Let newline be inserted (don't prevent default)
+                            Decode.fail "Insert newline"
 
-            else
-                Decode.fail "Not Enter key"
+                        else
+                            -- Submit
+                            Decode.succeed ( actions.toMsg SubmitAgent, True )
+
+                    else
+                        Decode.fail "Not a handled key"
+
+                ShiftEnter ->
+                    -- Shift+Enter submits, Enter or Alt+Enter inserts newline
+                    if key == "Enter" then
+                        if shiftKey then
+                            -- Submit
+                            Decode.succeed ( actions.toMsg SubmitAgent, True )
+
+                        else
+                            -- Let newline be inserted (don't prevent default)
+                            Decode.fail "Insert newline"
+
+                    else
+                        Decode.fail "Not a handled key"
+
+                EnterTwice ->
+                    -- Double Enter submits, any Enter/Shift+Enter/Alt+Enter inserts newline
+                    -- but we track timing to detect double-tap
+                    if key == "Enter" then
+                        Decode.field "timeStamp" Decode.float
+                            |> Decode.map toMsgWithPreventDefault
+
+                    else
+                        Decode.fail "Not a handled key"
 
         toMsgWithPreventDefault timestamp =
             let
@@ -217,7 +269,12 @@ enterKeyDecoder actions lastEnterTime =
                 isDoubleEnter =
                     timeDiff < 400 && timeDiff > 0
             in
+            -- In EnterTwice mode: prevent default only on double-tap submit
+            -- Single Enter should insert newline
             ( actions.toMsg (InputKeyDown currentTime), isDoubleEnter )
     in
-    Decode.field "key" Decode.string
-        |> Decode.andThen decodeIfEnter
+    Decode.map3 decodeKey
+        (Decode.field "key" Decode.string)
+        (Decode.field "shiftKey" Decode.bool)
+        (Decode.field "altKey" Decode.bool)
+        |> Decode.andThen identity

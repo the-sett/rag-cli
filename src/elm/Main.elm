@@ -6,6 +6,8 @@ import Css.Global
 import Html
 import Html.Styled as HS exposing (Html)
 import Html.Styled.Attributes as HA
+import Html.Styled.Events as HE
+import Http
 import Json.Decode as Decode exposing (Value)
 import Main.Style
 import Navigation exposing (Route)
@@ -14,6 +16,7 @@ import Pages.Chat.Component as Chat
 import Pages.Intro.Component as Intro
 import Ports
 import Procedure.Program
+import Settings exposing (AppSettings, SubmitShortcut)
 import Update2 as U2
 import Websocket
 
@@ -70,6 +73,9 @@ type alias Model =
     , pendingChatInit : Maybe String  -- Chat ID to send on init (Nothing = new chat, Just "" = needs init, Just id = reconnect)
     , pendingAgentId : Maybe String   -- Agent ID to use when starting a new chat with an agent
     , sessionInitialized : Bool       -- Whether we've sent an init message for current session
+    , appSettings : AppSettings       -- Application settings (submit shortcut, etc.)
+    , showSettingsModal : Bool        -- Whether the settings modal is visible
+    , pendingSettings : AppSettings   -- Settings being edited in the modal (before save)
     }
 
 
@@ -88,6 +94,13 @@ type Msg
     | IntroMsg Intro.Msg
     | ChatMsg Chat.Msg
     | AgentsMsg Agents.Msg
+    | GotSettings (Result Http.Error AppSettings)
+    | OpenSettingsModal
+    | CloseSettingsModal
+    | SetPendingShortcut SubmitShortcut
+    | SaveSettings
+    | SettingsSaved (Result Http.Error AppSettings)
+    | NoOp
 
 
 
@@ -144,6 +157,9 @@ init flagsValue =
             , pendingChatInit = pendingInit
             , pendingAgentId = Nothing
             , sessionInitialized = False
+            , appSettings = Settings.defaultSettings
+            , showSettingsModal = False
+            , pendingSettings = Settings.defaultSettings
             }
     in
     ( model
@@ -151,6 +167,7 @@ init flagsValue =
         [ wsApi.open flags.cragUrl WsOpened
         , Intro.fetchChats IntroMsg
         , Intro.fetchAgents IntroMsg
+        , Settings.fetchSettings GotSettings
         ]
     )
 
@@ -211,6 +228,14 @@ introProtocol model =
     , onGoToAgents = \( introModel, cmds ) ->
         ( { model | intro = introModel }
         , Cmd.batch [ cmds, Navigation.pushUrl (Navigation.routeToString Navigation.Agents) ]
+        )
+    , onOpenSettings = \( introModel, cmds ) ->
+        ( { model
+            | intro = introModel
+            , showSettingsModal = True
+            , pendingSettings = model.appSettings
+          }
+        , cmds
         )
     }
 
@@ -323,6 +348,52 @@ update msg model =
 
         AgentsMsg agentsMsg ->
             Agents.update (agentsProtocol model) agentsMsg model.agents
+
+        GotSettings result ->
+            case result of
+                Ok settings ->
+                    U2.pure { model | appSettings = settings, pendingSettings = settings }
+
+                Err _ ->
+                    -- Keep defaults if we fail to load settings
+                    U2.pure model
+
+        OpenSettingsModal ->
+            U2.pure
+                { model
+                    | showSettingsModal = True
+                    , pendingSettings = model.appSettings
+                }
+
+        CloseSettingsModal ->
+            U2.pure { model | showSettingsModal = False }
+
+        SetPendingShortcut shortcut ->
+            let
+                pending =
+                    model.pendingSettings
+            in
+            U2.pure { model | pendingSettings = { pending | submitShortcut = shortcut } }
+
+        SaveSettings ->
+            ( model, Settings.saveSettings SettingsSaved model.pendingSettings )
+
+        SettingsSaved result ->
+            case result of
+                Ok settings ->
+                    U2.pure
+                        { model
+                            | appSettings = settings
+                            , pendingSettings = settings
+                            , showSettingsModal = False
+                        }
+
+                Err _ ->
+                    -- Close modal even on error (settings will revert)
+                    U2.pure { model | showSettingsModal = False }
+
+        NoOp ->
+            U2.pure model
 
 
 
@@ -583,6 +654,7 @@ viewStyled model =
         [ HA.class "app-container" ]
         [ Main.Style.style |> Css.Global.global
         , viewPage model
+        , viewSettingsModal model
         ]
 
 
@@ -598,6 +670,8 @@ viewPage model =
                 , isConnected = isConnected model.connectionStatus
                 , onReconnect = Reconnect
                 , onGoHome = GoHome
+                , onOpenSettings = OpenSettingsModal
+                , submitShortcut = model.appSettings.submitShortcut
                 }
                 model.chat
 
@@ -606,11 +680,86 @@ viewPage model =
                 { toMsg = AgentsMsg
                 , isConnected = isConnected model.connectionStatus
                 , onGoHome = GoHome
+                , onOpenSettings = OpenSettingsModal
+                , submitShortcut = model.appSettings.submitShortcut
                 }
                 model.agents
 
         Nothing ->
             Intro.view { toMsg = IntroMsg } model.intro
+
+
+viewSettingsModal : Model -> Html Msg
+viewSettingsModal model =
+    if model.showSettingsModal then
+        HS.div
+            [ HA.class "modal-overlay"
+            , HE.onClick CloseSettingsModal
+            ]
+            [ HS.div
+                [ HA.class "modal-content"
+                , HE.stopPropagationOn "click" (Decode.succeed ( NoOp, True ))
+                ]
+                [ HS.h3
+                    [ HA.class "modal-title" ]
+                    [ HS.text "Settings" ]
+                , HS.div
+                    [ HA.class "settings-form" ]
+                    [ HS.label
+                        [ HA.class "settings-label" ]
+                        [ HS.text "Query Submit Shortcut" ]
+                    , HS.div
+                        [ HA.class "settings-radio-group" ]
+                        (List.map (viewShortcutOption model.pendingSettings.submitShortcut) Settings.allSubmitShortcuts)
+                    ]
+                , HS.div
+                    [ HA.class "modal-buttons" ]
+                    [ HS.button
+                        [ HA.class "modal-cancel-button"
+                        , HE.onClick CloseSettingsModal
+                        ]
+                        [ HS.text "Cancel" ]
+                    , HS.button
+                        [ HA.class "modal-save-button"
+                        , HE.onClick SaveSettings
+                        ]
+                        [ HS.text "Save" ]
+                    ]
+                ]
+            ]
+
+    else
+        HS.text ""
+
+
+viewShortcutOption : SubmitShortcut -> SubmitShortcut -> Html Msg
+viewShortcutOption selectedShortcut shortcut =
+    let
+        isSelected =
+            selectedShortcut == shortcut
+
+        optionClass =
+            if isSelected then
+                "settings-radio-option settings-radio-option-selected"
+
+            else
+                "settings-radio-option"
+    in
+    HS.label
+        [ HA.class optionClass
+        , HE.onClick (SetPendingShortcut shortcut)
+        ]
+        [ HS.input
+            [ HA.type_ "radio"
+            , HA.class "settings-radio-input"
+            , HA.name "submit-shortcut"
+            , HA.checked isSelected
+            ]
+            []
+        , HS.span
+            [ HA.class "settings-radio-text" ]
+            [ HS.text (Settings.submitShortcutLabel shortcut) ]
+        ]
 
 
 isConnected : ConnectionStatus -> Bool
