@@ -24,6 +24,7 @@ namespace rag {
 struct FileMetadata {
     std::string openai_file_id;  // OpenAI file ID for this file.
     int64_t last_modified;       // Unix timestamp of last modification.
+    std::string content_hash;    // Hash of file contents for change detection.
 };
 
 /**

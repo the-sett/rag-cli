@@ -6,6 +6,9 @@
 #include <thread>
 #include <chrono>
 #include <set>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
 
 namespace fs = std::filesystem;
 
@@ -24,9 +27,34 @@ int64_t get_file_mtime(const std::string& filepath) {
     }
 }
 
+std::string compute_file_hash(const std::string& filepath) {
+    // FNV-1a 64-bit hash - fast, non-cryptographic hash suitable for change detection
+    constexpr uint64_t FNV_OFFSET_BASIS = 14695981039346656037ULL;
+    constexpr uint64_t FNV_PRIME = 1099511628211ULL;
+
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file.is_open()) {
+        return "";
+    }
+
+    uint64_t hash = FNV_OFFSET_BASIS;
+    char buffer[8192];
+    while (file.read(buffer, sizeof(buffer)) || file.gcount() > 0) {
+        for (std::streamsize i = 0; i < file.gcount(); ++i) {
+            hash ^= static_cast<uint8_t>(buffer[i]);
+            hash *= FNV_PRIME;
+        }
+    }
+
+    // Convert to hex string
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return oss.str();
+}
+
 FileDiff compute_file_diff(
     const std::vector<std::string>& current_files,
-    const std::map<std::string, FileMetadata>& indexed_files
+    std::map<std::string, FileMetadata>& indexed_files
 ) {
     FileDiff diff;
 
@@ -40,10 +68,22 @@ FileDiff compute_file_diff(
             // File is new
             diff.added.push_back(filepath);
         } else {
-            // File exists - check if modified
+            // File exists - check if modified by timestamp first (fast check)
             int64_t current_mtime = get_file_mtime(filepath);
             if (current_mtime != it->second.last_modified) {
-                diff.modified.push_back(filepath);
+                // Timestamp changed - check if content actually changed using hash
+                std::string current_hash = compute_file_hash(filepath);
+
+                if (it->second.content_hash.empty()) {
+                    // No stored hash - must reindex (legacy entry without hash)
+                    diff.modified.push_back(filepath);
+                } else if (current_hash != it->second.content_hash) {
+                    // Hash differs - content changed, needs reindex
+                    diff.modified.push_back(filepath);
+                } else {
+                    // Hash matches - content unchanged, just update timestamp
+                    it->second.last_modified = current_mtime;
+                }
             }
         }
     }
@@ -100,10 +140,11 @@ std::string create_vector_store(
         if (result.success()) {
             file_ids.push_back(result.file_id);
 
-            // Record the file metadata
+            // Record the file metadata including content hash
             FileMetadata metadata;
             metadata.openai_file_id = result.file_id;
             metadata.last_modified = get_file_mtime(result.filepath);
+            metadata.content_hash = compute_file_hash(result.filepath);
             indexed_files[result.filepath] = metadata;
 
             console.print_success(result.filepath);
@@ -238,9 +279,10 @@ void update_vector_store(
                 // Add to vector store
                 client.add_file_to_vector_store(vector_store_id, new_file_id);
 
-                // Update metadata
+                // Update metadata including content hash
                 it->second.openai_file_id = new_file_id;
                 it->second.last_modified = get_file_mtime(filepath);
+                it->second.content_hash = compute_file_hash(filepath);
 
                 console.clear_status();
                 console.print_info("~ " + filepath);
@@ -263,10 +305,11 @@ void update_vector_store(
             // Add to vector store
             client.add_file_to_vector_store(vector_store_id, file_id);
 
-            // Record metadata
+            // Record metadata including content hash
             FileMetadata metadata;
             metadata.openai_file_id = file_id;
             metadata.last_modified = get_file_mtime(filepath);
+            metadata.content_hash = compute_file_hash(filepath);
             indexed_files[filepath] = metadata;
 
             console.clear_status();

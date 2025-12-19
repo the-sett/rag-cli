@@ -57,6 +57,7 @@ std::optional<Settings> load_settings() {
                 FileMetadata fm;
                 fm.openai_file_id = metadata.value("openai_file_id", "");
                 fm.last_modified = metadata.value("last_modified", int64_t(0));
+                fm.content_hash = metadata.value("content_hash", "");
                 settings.indexed_files[filepath] = fm;
             }
         }
@@ -110,10 +111,14 @@ void save_settings(const Settings& settings) {
 
     json indexed_files_json = json::object();
     for (const auto& [filepath, metadata] : settings.indexed_files) {
-        indexed_files_json[filepath] = {
+        json file_meta = {
             {"openai_file_id", metadata.openai_file_id},
             {"last_modified", metadata.last_modified}
         };
+        if (!metadata.content_hash.empty()) {
+            file_meta["content_hash"] = metadata.content_hash;
+        }
+        indexed_files_json[filepath] = file_meta;
     }
     j["indexed_files"] = indexed_files_json;
 

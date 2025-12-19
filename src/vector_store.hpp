@@ -27,13 +27,18 @@ struct FileDiff {
 };
 
 // Computes the diff between current files and previously indexed files.
+// Uses content hashes to avoid reindexing files that haven't actually changed.
+// Updates indexed_files timestamps/hashes for files with unchanged content.
 FileDiff compute_file_diff(
     const std::vector<std::string>& current_files,
-    const std::map<std::string, FileMetadata>& indexed_files
+    std::map<std::string, FileMetadata>& indexed_files
 );
 
 // Returns the modification timestamp of a file in seconds since epoch.
 int64_t get_file_mtime(const std::string& filepath);
+
+// Computes a hash of the file contents for change detection.
+std::string compute_file_hash(const std::string& filepath);
 
 /**
  * Uploads files and creates a new vector store.
