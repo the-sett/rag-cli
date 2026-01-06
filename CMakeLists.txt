@@ -116,6 +116,7 @@ set(SOURCES
     src/input_editor.cpp
     src/http_server.cpp
     src/websocket_server.cpp
+    src/mcp_server.cpp
     src/embedded_resources.cpp
     src/third_party/miniz.c
 )
@@ -165,6 +166,7 @@ if(BUILD_TESTS)
         src/input_editor.cpp
         src/http_server.cpp
         src/websocket_server.cpp
+        src/mcp_server.cpp
         src/embedded_resources.cpp
         src/third_party/miniz.c
     )

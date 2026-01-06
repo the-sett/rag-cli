@@ -10,6 +10,7 @@
 #include "terminal.hpp"
 #include "http_server.hpp"
 #include "websocket_server.hpp"
+#include "mcp_server.hpp"
 #include "verbose.hpp"
 
 #include <CLI/CLI.hpp>
@@ -273,6 +274,10 @@ int main(int argc, char* argv[]) {
     app.add_flag("-s,--server", server_mode,
                  "Run in server mode with web interface");
 
+    bool mcp_mode = false;
+    app.add_flag("--mcp", mcp_mode,
+                 "Run as MCP server (for Claude Code integration)");
+
     int server_port = 8192;
     app.add_option("-p,--port", server_port,
                    "Port for web server (default: 8192)")
@@ -403,6 +408,61 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        return 0;
+    }
+
+    // MCP server mode - run as MCP server for Claude Code integration.
+    if (mcp_mode) {
+        // Check for API key.
+        const char* api_key_env = std::getenv("OPEN_AI_API_KEY");
+        if (!api_key_env || std::string(api_key_env).empty()) {
+            std::cerr << "Error: OPEN_AI_API_KEY environment variable not set" << std::endl;
+            return 1;
+        }
+
+        // Load settings (must have existing settings for MCP mode).
+        auto existing = load_settings();
+        if (!existing.has_value() || !existing->is_valid()) {
+            std::cerr << "Error: No valid settings found. Run 'crag <files>' first to create an index." << std::endl;
+            return 1;
+        }
+
+        Settings settings = *existing;
+
+        // Validate chats - remove entries for deleted chat files
+        validate_chats(settings);
+        save_settings(settings);
+
+        // Determine reasoning effort.
+        std::string reasoning_effort = settings.reasoning_effort;
+        if (thinking != '\0') {
+            auto it = THINKING_MAP.find(thinking);
+            if (it != THINKING_MAP.end()) {
+                reasoning_effort = it->second;
+            }
+        }
+
+        std::string system_prompt = build_system_prompt();
+
+        // Create OpenAI client.
+        OpenAIClient client(api_key_env);
+
+        // Create and run MCP server.
+        std::cerr << "MCP: Starting crag MCP server" << std::endl;
+        std::cerr << "MCP: Model: " << settings.model << std::endl;
+        std::cerr << "MCP: Vector store: " << settings.vector_store_id << std::endl;
+
+        MCPServer mcp_server(
+            client,
+            settings,
+            settings.model,
+            settings.vector_store_id,
+            reasoning_effort,
+            system_prompt,
+            LOG_DIR
+        );
+
+        mcp_server.run();  // Blocks until stdin closes
         return 0;
     }
 
@@ -623,6 +683,22 @@ int main(int argc, char* argv[]) {
         g_stop_spinner = nullptr;
 
         chat.add_assistant_message(streamed_text);
+
+        // Index chat in settings (same as web UI)
+        if (chat.is_materialized()) {
+            ChatInfo chat_info;
+            chat_info.id = chat.get_chat_id();
+            chat_info.log_file = chat.get_log_path();
+            chat_info.json_file = chat.get_json_path();
+            chat_info.openai_response_id = chat.get_openai_response_id();
+            chat_info.created_at = chat.get_created_at();
+            chat_info.title = chat.get_title();
+            chat_info.agent_id = chat.get_agent_id();
+
+            upsert_chat(settings, chat_info);
+            save_settings(settings);
+        }
+
         return true;
     };
 
