@@ -270,6 +270,7 @@ chatProtocol model =
 
             _ ->
                 ( { model | chat = chatModel }, Cmd.batch [ cmds, Ports.debugLog "Not connected - cannot send cancel" ] )
+    , onCopy = Ports.copyToClipboard
     }
 
 

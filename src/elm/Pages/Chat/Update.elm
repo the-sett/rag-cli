@@ -28,6 +28,7 @@ type alias Protocol model msg =
     , onUpdate : ( Model, Cmd msg ) -> ( model, Cmd msg )
     , onSendMessage : String -> ( Model, Cmd msg ) -> ( model, Cmd msg )
     , onCancelStream : ( Model, Cmd msg ) -> ( model, Cmd msg )
+    , onCopy : String -> Cmd msg
     }
 
 
@@ -45,6 +46,10 @@ update protocol msg model =
 
         CancelStream ->
             cancelStream protocol model
+
+        CopyToClipboard text ->
+            ( model, protocol.onCopy text )
+                |> protocol.onUpdate
 
         ScrollToEntry targetId ->
             ( { model | activeTocEntryId = Just targetId }

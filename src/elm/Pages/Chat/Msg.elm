@@ -13,6 +13,7 @@ type Msg
     = UserInputChanged String
     | SendMessage
     | CancelStream
+    | CopyToClipboard String
     | ScrollToEntry String
     | ScrollResult (Result Dom.Error ())
     | InputFocused

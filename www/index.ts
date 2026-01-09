@@ -47,3 +47,12 @@ if (app.ports.debugLog) {
     console.log("[Elm Debug]", msg);
   });
 }
+
+// Clipboard port
+if (app.ports.copyToClipboard) {
+  app.ports.copyToClipboard.subscribe((text: string) => {
+    navigator.clipboard.writeText(text).catch((err) => {
+      console.error("Failed to copy to clipboard:", err);
+    });
+  });
+}

@@ -9,7 +9,9 @@ module Markdown.ChatMarkBlock exposing
     , initStreamState
     , parseMarkdown
     , renderBlocks
+    , renderBlocksWithCopy
     , renderBlocksWithIds
+    , renderBlocksWithIdsAndCopy
     )
 
 {-| High-level API for streaming markdown rendering.
@@ -163,11 +165,23 @@ parseRawBlock raw =
 -}
 renderBlocks : List ChatMarkBlock -> String -> List (Html msg)
 renderBlocks blocks pendingText =
+    renderBlocksInternal Nothing blocks pendingText
+
+
+{-| Render a list of ChatMarkBlocks to Html with a copy button on code blocks.
+-}
+renderBlocksWithCopy : (String -> msg) -> List ChatMarkBlock -> String -> List (Html msg)
+renderBlocksWithCopy onCopy blocks pendingText =
+    renderBlocksInternal (Just onCopy) blocks pendingText
+
+
+renderBlocksInternal : Maybe (String -> msg) -> List ChatMarkBlock -> String -> List (Html msg)
+renderBlocksInternal maybeCopyHandler blocks pendingText =
     let
         -- First, render completed blocks
         renderedCompleted =
             blocks
-                |> List.map renderChatMarkBlock
+                |> List.map (renderChatMarkBlock maybeCopyHandler)
 
         -- Then render pending text if any
         renderedPending =
@@ -182,11 +196,11 @@ renderBlocks blocks pendingText =
 
 {-| Render a single ChatMarkBlock.
 -}
-renderChatMarkBlock : ChatMarkBlock -> Html msg
-renderChatMarkBlock block =
+renderChatMarkBlock : Maybe (String -> msg) -> ChatMarkBlock -> Html msg
+renderChatMarkBlock maybeCopyHandler block =
     case block of
         CompleteBlock _ parsedBlock ->
-            renderMarkdownBlock parsedBlock
+            renderMarkdownBlock maybeCopyHandler parsedBlock
 
         PendingBlock raw ->
             renderPending raw
@@ -197,9 +211,18 @@ renderChatMarkBlock block =
 
 {-| Render a parsed markdown block.
 -}
-renderMarkdownBlock : Markdown.Block.Block -> Html msg
-renderMarkdownBlock block =
-    case Markdown.Renderer.render Markdown.StyledRenderer.renderer [ block ] of
+renderMarkdownBlock : Maybe (String -> msg) -> Markdown.Block.Block -> Html msg
+renderMarkdownBlock maybeCopyHandler block =
+    let
+        theRenderer =
+            case maybeCopyHandler of
+                Just onCopy ->
+                    Markdown.StyledRenderer.rendererWithCopy onCopy
+
+                Nothing ->
+                    Markdown.StyledRenderer.renderer
+    in
+    case Markdown.Renderer.render theRenderer [ block ] of
         Ok [ rendered ] ->
             rendered
 
@@ -256,6 +279,18 @@ The idPrefix is used to generate unique IDs like "msg-0-heading-0".
 -}
 renderBlocksWithIds : String -> List ChatMarkBlock -> String -> List (Html msg)
 renderBlocksWithIds idPrefix blocks pendingText =
+    renderBlocksWithIdsInternal Nothing idPrefix blocks pendingText
+
+
+{-| Render a list of ChatMarkBlocks to Html, adding IDs to headings and copy buttons on code blocks.
+-}
+renderBlocksWithIdsAndCopy : (String -> msg) -> String -> List ChatMarkBlock -> String -> List (Html msg)
+renderBlocksWithIdsAndCopy onCopy idPrefix blocks pendingText =
+    renderBlocksWithIdsInternal (Just onCopy) idPrefix blocks pendingText
+
+
+renderBlocksWithIdsInternal : Maybe (String -> msg) -> String -> List ChatMarkBlock -> String -> List (Html msg)
+renderBlocksWithIdsInternal maybeCopyHandler idPrefix blocks pendingText =
     let
         -- Render completed blocks with IDs
         ( renderedCompleted, _ ) =
@@ -264,7 +299,7 @@ renderBlocksWithIds idPrefix blocks pendingText =
                     (\block ( rendered, headingIdx ) ->
                         let
                             ( html, newIdx ) =
-                                renderChatMarkBlockWithId idPrefix headingIdx block
+                                renderChatMarkBlockWithId maybeCopyHandler idPrefix headingIdx block
                         in
                         ( rendered ++ [ html ], newIdx )
                     )
@@ -284,8 +319,8 @@ renderBlocksWithIds idPrefix blocks pendingText =
 {-| Render a single ChatMarkBlock, adding ID to heading if applicable.
 Returns the rendered Html and the next heading index.
 -}
-renderChatMarkBlockWithId : String -> Int -> ChatMarkBlock -> ( Html msg, Int )
-renderChatMarkBlockWithId idPrefix headingIdx block =
+renderChatMarkBlockWithId : Maybe (String -> msg) -> String -> Int -> ChatMarkBlock -> ( Html msg, Int )
+renderChatMarkBlockWithId maybeCopyHandler idPrefix headingIdx block =
     case block of
         CompleteBlock _ parsedBlock ->
             case parsedBlock of
@@ -294,10 +329,10 @@ renderChatMarkBlockWithId idPrefix headingIdx block =
                         headingId =
                             idPrefix ++ "-heading-" ++ String.fromInt headingIdx
                     in
-                    ( renderMarkdownBlockWithId headingId parsedBlock, headingIdx + 1 )
+                    ( renderMarkdownBlockWithId maybeCopyHandler headingId parsedBlock, headingIdx + 1 )
 
                 _ ->
-                    ( renderMarkdownBlock parsedBlock, headingIdx )
+                    ( renderMarkdownBlock maybeCopyHandler parsedBlock, headingIdx )
 
         PendingBlock raw ->
             ( renderPending raw, headingIdx )
@@ -308,9 +343,18 @@ renderChatMarkBlockWithId idPrefix headingIdx block =
 
 {-| Render a parsed markdown block with a specific ID.
 -}
-renderMarkdownBlockWithId : String -> Markdown.Block.Block -> Html msg
-renderMarkdownBlockWithId headingId block =
-    case Markdown.Renderer.render Markdown.StyledRenderer.renderer [ block ] of
+renderMarkdownBlockWithId : Maybe (String -> msg) -> String -> Markdown.Block.Block -> Html msg
+renderMarkdownBlockWithId maybeCopyHandler headingId block =
+    let
+        theRenderer =
+            case maybeCopyHandler of
+                Just onCopy ->
+                    Markdown.StyledRenderer.rendererWithCopy onCopy
+
+                Nothing ->
+                    Markdown.StyledRenderer.renderer
+    in
+    case Markdown.Renderer.render theRenderer [ block ] of
         Ok [ rendered ] ->
             -- Wrap the heading in a div with the ID
             HS.div [ HA.id headingId ] [ rendered ]

@@ -1,4 +1,4 @@
-module Markdown.StyledRenderer exposing (renderer)
+module Markdown.StyledRenderer exposing (renderer, rendererWithCopy)
 
 {-| Custom markdown renderer that outputs Html.Styled elements.
 
@@ -8,6 +8,7 @@ This allows markdown to be rendered with elm-css styling.
 
 import Html.Styled as HS exposing (Html)
 import Html.Styled.Attributes as HA
+import Html.Styled.Events as HE
 import Markdown.Block exposing (ListItem(..), Task(..))
 import Markdown.Html
 import Markdown.Renderer exposing (Renderer)
@@ -17,6 +18,18 @@ import Markdown.Renderer exposing (Renderer)
 -}
 renderer : Renderer (Html msg)
 renderer =
+    baseRenderer Nothing
+
+
+{-| A renderer that produces Html.Styled elements with a copy button on code blocks.
+-}
+rendererWithCopy : (String -> msg) -> Renderer (Html msg)
+rendererWithCopy onCopy =
+    baseRenderer (Just onCopy)
+
+
+baseRenderer : Maybe (String -> msg) -> Renderer (Html msg)
+baseRenderer maybeCopyHandler =
     { heading = renderHeading
     , paragraph = HS.p [ HA.class "md-paragraph" ]
     , blockQuote = HS.blockquote [ HA.class "md-blockquote" ]
@@ -31,7 +44,7 @@ renderer =
     , image = renderImage
     , unorderedList = renderUnorderedList
     , orderedList = renderOrderedList
-    , codeBlock = renderCodeBlock
+    , codeBlock = renderCodeBlock maybeCopyHandler
     , thematicBreak = HS.hr [ HA.class "md-hr" ] []
     , table = HS.table [ HA.class "md-table" ]
     , tableHeader = HS.thead [ HA.class "md-thead" ]
@@ -163,8 +176,8 @@ renderOrderedList startingNumber items =
         (List.map (\children -> HS.li [ HA.class "md-li" ] children) items)
 
 
-renderCodeBlock : { body : String, language : Maybe String } -> Html msg
-renderCodeBlock { body, language } =
+renderCodeBlock : Maybe (String -> msg) -> { body : String, language : Maybe String } -> Html msg
+renderCodeBlock maybeCopyHandler { body, language } =
     let
         languageClass =
             case language of
@@ -173,9 +186,23 @@ renderCodeBlock { body, language } =
 
                 Nothing ->
                     []
+
+        copyButton =
+            case maybeCopyHandler of
+                Just onCopy ->
+                    HS.button
+                        [ HA.class "code-copy-button"
+                        , HE.onClick (onCopy body)
+                        , HA.title "Copy code"
+                        ]
+                        [ HS.text "\u{1F4CB}" ]  -- Clipboard emoji
+
+                Nothing ->
+                    HS.text ""
     in
     HS.pre [ HA.class "md-pre" ]
-        [ HS.code
+        [ copyButton
+        , HS.code
             (HA.class "md-code-block" :: languageClass)
             [ HS.text body ]
         ]

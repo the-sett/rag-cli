@@ -7,7 +7,7 @@ import Html.Styled as HS exposing (Html)
 import Html.Styled.Attributes as HA
 import Html.Styled.Events as HE
 import Json.Decode as Decode
-import Markdown.ChatMarkBlock as ChatMarkBlock exposing (StreamState)
+import Markdown.ChatMarkBlock as ChatMarkBlock exposing (ChatMarkBlock(..), StreamState, renderBlocksWithCopy, renderBlocksWithIdsAndCopy)
 import Pages.Chat.Model exposing (ChatMessage, Model, TocEntry, scrollEventDecoder)
 import Pages.Chat.Msg exposing (Msg(..))
 import Settings exposing (SubmitShortcut(..))
@@ -217,13 +217,16 @@ viewMessages actions model =
 
 
 viewStreamingMessage : Actions msg -> Int -> StreamState -> String -> Html msg
-viewStreamingMessage _ msgIndex streamState pendingText =
+viewStreamingMessage actions msgIndex streamState pendingText =
     let
         completedBlocks =
             streamState.completedBlocks
 
         idPrefix =
             "msg-" ++ String.fromInt msgIndex
+
+        onCopy =
+            CopyToClipboard >> actions.toMsg
     in
     HS.div
         [ HA.class "message"
@@ -231,12 +234,12 @@ viewStreamingMessage _ msgIndex streamState pendingText =
         ]
         [ HS.div
             [ HA.class "message-content" ]
-            (ChatMarkBlock.renderBlocksWithIds idPrefix completedBlocks pendingText)
+            (renderBlocksWithIdsAndCopy onCopy idPrefix completedBlocks pendingText)
         ]
 
 
 viewMessageWithIndex : Actions msg -> Int -> ChatMessage -> Html msg
-viewMessageWithIndex _ msgIndex message =
+viewMessageWithIndex actions msgIndex message =
     let
         roleClass =
             case message.role of
@@ -255,22 +258,68 @@ viewMessageWithIndex _ msgIndex message =
         idPrefix =
             "msg-" ++ String.fromInt msgIndex
 
+        -- Use copy-enabled renderers for code blocks
+        onCopy =
+            CopyToClipboard >> actions.toMsg
+
         renderedContent =
             if message.role == "assistant" then
-                ChatMarkBlock.renderBlocksWithIds idPrefix message.blocks ""
+                renderBlocksWithIdsAndCopy onCopy idPrefix message.blocks ""
 
             else
-                ChatMarkBlock.renderBlocks message.blocks ""
+                renderBlocksWithCopy onCopy message.blocks ""
+
+        -- Extract raw text from all blocks for copying
+        rawText =
+            extractRawText message.blocks
+
+        copyButton =
+            if message.role == "user" || message.role == "assistant" then
+                HS.div
+                    [ HA.class "message-header" ]
+                    [ HS.button
+                        [ HA.class "copy-button"
+                        , HE.onClick (actions.toMsg (CopyToClipboard rawText))
+                        , HA.title "Copy to clipboard"
+                        ]
+                        [ HS.text "\u{1F4CB}" ]  -- Clipboard emoji
+                    ]
+
+            else
+                HS.text ""
     in
     HS.div
         [ HA.class "message"
         , HA.class roleClass
         , HA.id idPrefix
         ]
-        [ HS.div
+        [ copyButton
+        , HS.div
             [ HA.class "message-content" ]
             renderedContent
         ]
+
+
+{-| Extract raw text from a list of ChatMarkBlocks.
+-}
+extractRawText : List ChatMarkBlock -> String
+extractRawText blocks =
+    blocks
+        |> List.map extractBlockText
+        |> String.join "\n"
+
+
+extractBlockText : ChatMarkBlock -> String
+extractBlockText block =
+    case block of
+        CompleteBlock raw _ ->
+            raw
+
+        PendingBlock raw ->
+            raw
+
+        ErrorBlock raw _ ->
+            raw
 
 
 viewInput : Actions msg -> Model -> Html msg

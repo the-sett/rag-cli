@@ -1057,6 +1057,32 @@ messageStyles =
             , Css.lineHeight (Css.num 1.68)
             ]
         ]
+
+    -- Message header with copy button
+    , Css.Global.class "message-header"
+        [ Css.displayFlex
+        , Css.justifyContent Css.flexEnd
+        , Css.marginBottom space1
+        ]
+
+    -- Copy button (shared style for messages and code blocks)
+    , Css.Global.class "copy-button"
+        [ Css.padding2 (Css.px 4) (Css.px 8)
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.backgroundColor Css.transparent
+        , Css.cursor Css.pointer
+        , Css.fontSize (Css.rem 0.875)
+        , Css.lineHeight (Css.num 1)
+        , Css.color colorTextSecondary
+        , Css.opacity (Css.num 0.6)
+        , Css.property "transition" "opacity 0.2s, background-color 0.2s, color 0.2s"
+        , Css.hover
+            [ Css.opacity (Css.num 1)
+            , Css.backgroundColor colorBackgroundTertiary
+            , Css.color colorText
+            ]
+        ]
     ]
 
 
@@ -1338,9 +1364,31 @@ markdownStyles =
         , Css.borderRadius (Css.px 4)
         , Css.overflow Css.auto
         , Css.property "-webkit-overflow-scrolling" "touch"
+        , Css.position Css.relative
         , mediaMedium
             [ Css.margin2 space3 Css.zero
             , Css.padding space3
+            ]
+        ]
+
+    -- Code block copy button (light on dark background)
+    , Css.Global.class "code-copy-button"
+        [ Css.position Css.absolute
+        , Css.top (Css.px 8)
+        , Css.right (Css.px 8)
+        , Css.padding2 (Css.px 4) (Css.px 8)
+        , Css.border Css.zero
+        , Css.borderRadius (Css.px 4)
+        , Css.backgroundColor Css.transparent
+        , Css.cursor Css.pointer
+        , Css.fontSize (Css.rem 0.875)
+        , Css.lineHeight (Css.num 1)
+        , Css.color colorCodeText
+        , Css.opacity (Css.num 0.5)
+        , Css.property "transition" "opacity 0.2s, background-color 0.2s"
+        , Css.hover
+            [ Css.opacity (Css.num 1)
+            , Css.backgroundColor (Css.rgba 255 255 255 0.1)
             ]
         ]
 
