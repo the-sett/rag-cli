@@ -29,6 +29,7 @@ type alias Model =
     , tocElementPositions : List { id : String, top : Float }
     , chatId : Maybe String  -- Current chat ID (Nothing for new chats)
     , sidebarVisible : Bool  -- Whether the sidebar is visible (controlled by MCP)
+    , isDraggingOver : Bool  -- Whether a file is being dragged over the input
     }
 
 

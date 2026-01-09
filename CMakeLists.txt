@@ -117,6 +117,7 @@ set(SOURCES
     src/http_server.cpp
     src/websocket_server.cpp
     src/mcp_server.cpp
+    src/file_watcher.cpp
     src/embedded_resources.cpp
     src/third_party/miniz.c
 )
@@ -167,6 +168,7 @@ if(BUILD_TESTS)
         src/http_server.cpp
         src/websocket_server.cpp
         src/mcp_server.cpp
+        src/file_watcher.cpp
         src/embedded_resources.cpp
         src/third_party/miniz.c
     )

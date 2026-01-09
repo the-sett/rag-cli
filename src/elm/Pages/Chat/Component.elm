@@ -62,6 +62,7 @@ init chatId =
       , tocElementPositions = []
       , chatId = chatId
       , sidebarVisible = True
+      , isDraggingOver = False
       }
     , Cmd.none
     )

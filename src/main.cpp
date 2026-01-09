@@ -11,6 +11,7 @@
 #include "http_server.hpp"
 #include "websocket_server.hpp"
 #include "mcp_server.hpp"
+#include "file_watcher.hpp"
 #include "verbose.hpp"
 
 #include <CLI/CLI.hpp>
@@ -394,6 +395,27 @@ int main(int argc, char* argv[]) {
             console.println();
         });
 
+        // Create file watcher for automatic reindexing
+        FileWatcher file_watcher(settings, client);
+        file_watcher.on_reindex([&console, &ws_server](size_t added, size_t modified, size_t removed) {
+            std::string msg = "Reindexed: ";
+            if (added > 0) msg += std::to_string(added) + " added";
+            if (modified > 0) {
+                if (added > 0) msg += ", ";
+                msg += std::to_string(modified) + " modified";
+            }
+            if (removed > 0) {
+                if (added > 0 || modified > 0) msg += ", ";
+                msg += std::to_string(removed) + " removed";
+            }
+            console.print_info("[FileWatcher] " + msg);
+
+            // Notify all connected WebSocket clients
+            ws_server.broadcast_reindex(added, modified, removed);
+        });
+        file_watcher.start();
+        console.print_info("File watcher started (checking every 5 seconds)");
+
         // Start WebSocket server on same port (will handle /ws path).
         // Note: IXWebSocket server runs on its own port, so we use port+1 for WebSocket.
         int ws_port = server_port + 1;
@@ -408,6 +430,7 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
+        // File watcher will be stopped automatically when it goes out of scope
         return 0;
     }
 
@@ -452,6 +475,17 @@ int main(int argc, char* argv[]) {
         std::cerr << "MCP: Model: " << settings.model << std::endl;
         std::cerr << "MCP: Vector store: " << settings.vector_store_id << std::endl;
 
+        // Create file watcher for automatic reindexing
+        FileWatcher file_watcher(settings, client);
+        file_watcher.on_reindex([](size_t added, size_t modified, size_t removed) {
+            std::cerr << "[FileWatcher] Reindexed: "
+                      << added << " added, "
+                      << modified << " modified, "
+                      << removed << " removed" << std::endl;
+        });
+        file_watcher.start();
+        std::cerr << "MCP: File watcher started (checking every 5 seconds)" << std::endl;
+
         MCPServer mcp_server(
             client,
             settings,
@@ -463,6 +497,8 @@ int main(int argc, char* argv[]) {
         );
 
         mcp_server.run();  // Blocks until stdin closes
+
+        // File watcher will be stopped automatically when it goes out of scope
         return 0;
     }
 

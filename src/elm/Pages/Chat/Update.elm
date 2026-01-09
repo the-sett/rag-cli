@@ -13,6 +13,7 @@ module Pages.Chat.Update exposing
 -}
 
 import Browser.Dom as Dom
+import File
 import Markdown.ChatMarkBlock as ChatMarkBlock
 import Pages.Chat.Model exposing (ChatMessage, Model, ScrollEvent, TocEntry)
 import Pages.Chat.Msg exposing (Msg(..))
@@ -92,6 +93,36 @@ update protocol msg model =
 
         StreamError errorMsg ->
             addErrorMessage protocol errorMsg model
+
+        DragEnter ->
+            ( { model | isDraggingOver = True }, Cmd.none )
+                |> protocol.onUpdate
+
+        DragLeave ->
+            ( { model | isDraggingOver = False }, Cmd.none )
+                |> protocol.onUpdate
+
+        FilesDropped file _ ->
+            -- Read the first file's content as text
+            ( { model | isDraggingOver = False }
+            , File.toString file
+                |> Task.perform GotFileContent
+                |> Cmd.map protocol.toMsg
+            )
+                |> protocol.onUpdate
+
+        GotFileContent content ->
+            -- Append the file content to the user input
+            let
+                newInput =
+                    if String.isEmpty model.userInput then
+                        content
+
+                    else
+                        model.userInput ++ "\n" ++ content
+            in
+            ( { model | userInput = newInput }, Cmd.none )
+                |> protocol.onUpdate
 
 
 {-| Handle incoming stream delta from websocket (called from Main).

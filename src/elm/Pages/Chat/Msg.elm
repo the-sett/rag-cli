@@ -4,6 +4,7 @@ module Pages.Chat.Msg exposing (Msg(..))
 -}
 
 import Browser.Dom as Dom
+import File exposing (File)
 import Pages.Chat.Model exposing (ScrollEvent)
 
 
@@ -26,3 +27,7 @@ type Msg
     | StreamDone (Maybe String)  -- Optional chat ID from server
     | StreamCancelled
     | StreamError String
+    | DragEnter
+    | DragLeave
+    | FilesDropped File (List File)
+    | GotFileContent String

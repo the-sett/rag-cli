@@ -1135,6 +1135,15 @@ inputStyles =
         , Css.borderBottomColor colorPositive
         ]
 
+    -- Drag over state (blue dashed borders) - file is being dragged over
+    , Css.Global.class "input-wrapper-dragover"
+        [ Css.borderTopColor colorBrand
+        , Css.borderBottomColor colorBrand
+        , Css.borderTopStyle Css.dashed
+        , Css.borderBottomStyle Css.dashed
+        , Css.backgroundColor (Css.rgba 0 101 189 0.05)
+        ]
+
     -- Textarea - full width, no borders, monospace font
     -- Has bottom padding to reserve space for toolbar (always present to keep height stable)
     -- Uses field-sizing: content to auto-grow with wrapped text

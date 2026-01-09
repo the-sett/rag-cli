@@ -3,6 +3,7 @@ module Pages.Chat.View exposing (Actions, view)
 {-| View for the Chat page.
 -}
 
+import File exposing (File)
 import Html.Styled as HS exposing (Html)
 import Html.Styled.Attributes as HA
 import Html.Styled.Events as HE
@@ -332,6 +333,9 @@ viewInput actions model =
             if isDisabled then
                 "input-wrapper-inactive"
 
+            else if model.isDraggingOver then
+                "input-wrapper-dragover"
+
             else if model.inputFocused then
                 "input-wrapper-focused"
 
@@ -351,13 +355,27 @@ viewInput actions model =
 
                 EnterTwice ->
                     "Type your message... (press Enter twice to send, Esc to cancel)"
+
+        -- Drag and drop handlers (only when input is active)
+        dragDropHandlers =
+            if isDisabled then
+                []
+
+            else
+                [ HE.preventDefaultOn "dragenter" (Decode.succeed ( actions.toMsg DragEnter, True ))
+                , HE.preventDefaultOn "dragover" (Decode.succeed ( actions.toMsg DragEnter, True ))
+                , HE.preventDefaultOn "dragleave" (Decode.succeed ( actions.toMsg DragLeave, True ))
+                , HE.preventDefaultOn "drop" (dropDecoder |> Decode.map (\msg -> ( actions.toMsg msg, True )))
+                ]
     in
     HS.div
         [ HA.class "input-container" ]
         [ HS.div
-            [ HA.class "input-wrapper"
-            , HA.class wrapperStateClass
-            ]
+            ([ HA.class "input-wrapper"
+             , HA.class wrapperStateClass
+             ]
+                ++ dragDropHandlers
+            )
             [ HS.textarea
                 [ HA.id "chat-input"
                 , HA.class "input-textarea"
@@ -387,6 +405,13 @@ viewInput actions model =
                 ]
             ]
         ]
+
+
+{-| Decoder for drop events - extracts files from the dataTransfer.
+-}
+dropDecoder : Decode.Decoder Msg
+dropDecoder =
+    Decode.at [ "dataTransfer", "files" ] (Decode.oneOrMore FilesDropped File.decoder)
 
 
 enterKeyDecoder : Actions msg -> Int -> Bool -> Decode.Decoder ( msg, Bool )

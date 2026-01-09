@@ -104,6 +104,27 @@ void WebSocketServer::stop() {
     }
 }
 
+void WebSocketServer::broadcast_reindex(size_t added, size_t modified, size_t removed) {
+    if (!server_) {
+        return;
+    }
+
+    nlohmann::json msg = {
+        {"type", "reindex"},
+        {"added", added},
+        {"modified", modified},
+        {"removed", removed}
+    };
+
+    std::string payload = msg.dump();
+    verbose_out("WS", "Broadcasting reindex notification to all clients");
+
+    // Broadcast to all connected clients
+    for (auto& client : server_->getClients()) {
+        client->send(payload);
+    }
+}
+
 void WebSocketServer::handle_message(void* conn_id, ix::WebSocket& ws, const std::string& message) {
     try {
         auto json = nlohmann::json::parse(message);

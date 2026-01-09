@@ -558,6 +558,20 @@ handleServerMessage payload model =
                     -- Handle UI commands from MCP tools
                     handleUiCommand command model
 
+                ReindexMessage { added, modified, removed } ->
+                    -- Log reindex notification (files were updated in background)
+                    let
+                        msg =
+                            "Reindexed: "
+                                ++ String.fromInt added
+                                ++ " added, "
+                                ++ String.fromInt modified
+                                ++ " modified, "
+                                ++ String.fromInt removed
+                                ++ " removed"
+                    in
+                    ( model, Ports.debugLog msg )
+
         Err _ ->
             U2.pure model
 
@@ -584,6 +598,7 @@ type ServerMessage
     | HistoryMessage { role : String, content : String }
     | ErrorMessage String
     | UiCommandMessage { command : String }
+    | ReindexMessage { added : Int, modified : Int, removed : Int }
 
 
 serverMessageDecoder : Decode.Decoder ServerMessage
@@ -616,6 +631,12 @@ serverMessageDecoder =
                 "ui_command" ->
                     Decode.map (\cmd -> UiCommandMessage { command = cmd })
                         (Decode.field "command" Decode.string)
+
+                "reindex" ->
+                    Decode.map3 (\a m r -> ReindexMessage { added = a, modified = m, removed = r })
+                        (Decode.field "added" Decode.int)
+                        (Decode.field "modified" Decode.int)
+                        (Decode.field "removed" Decode.int)
 
                 _ ->
                     Decode.fail ("Unknown message type: " ++ msgType)

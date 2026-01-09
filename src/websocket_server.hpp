@@ -82,6 +82,12 @@ public:
      */
     void stop();
 
+    /**
+     * Broadcasts a reindex notification to all connected clients.
+     * The message includes counts of added, modified, and removed files.
+     */
+    void broadcast_reindex(size_t added, size_t modified, size_t removed);
+
 private:
     OpenAIClient& client_;
     std::string model_;
