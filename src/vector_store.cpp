@@ -245,18 +245,39 @@ void update_vector_store(
             std::string display_name = fs::path(filepath).filename().string();
             console.start_status("Removing: " + display_name);
 
+            bool removal_ok = true;
             try {
-                // Remove from vector store
-                client.remove_file_from_vector_store(vector_store_id, it->second.openai_file_id);
-                // Delete the file from OpenAI storage
-                client.delete_file(it->second.openai_file_id);
-                console.clear_status();
-                console.print_warning("- " + filepath);
-                indexed_files.erase(it);
+                // Remove from vector store - ignore "not found" errors
+                try {
+                    client.remove_file_from_vector_store(vector_store_id, it->second.openai_file_id);
+                } catch (const std::exception& e) {
+                    std::string err(e.what());
+                    if (err.find("No such") == std::string::npos &&
+                        err.find("not found") == std::string::npos) {
+                        throw;
+                    }
+                }
+
+                // Delete the file from OpenAI storage - ignore "not found" errors
+                try {
+                    client.delete_file(it->second.openai_file_id);
+                } catch (const std::exception& e) {
+                    std::string err(e.what());
+                    if (err.find("No such") == std::string::npos &&
+                        err.find("not found") == std::string::npos) {
+                        throw;
+                    }
+                }
             } catch (const std::exception& e) {
                 console.clear_status();
                 console.print_error("Failed to remove " + filepath + ": " + e.what());
-                // Continue with other files
+                removal_ok = false;
+            }
+
+            if (removal_ok) {
+                console.clear_status();
+                console.print_warning("- " + filepath);
+                indexed_files.erase(it);
             }
         }
     }
@@ -269,10 +290,30 @@ void update_vector_store(
             console.start_status("Updating: " + display_name);
 
             try {
-                // Remove old version from vector store
-                client.remove_file_from_vector_store(vector_store_id, it->second.openai_file_id);
-                // Delete old file from OpenAI storage
-                client.delete_file(it->second.openai_file_id);
+                // Try to remove old version from vector store and storage.
+                // If the file no longer exists in OpenAI (e.g., was cleaned up),
+                // we treat that as success and proceed with uploading the new version.
+                try {
+                    client.remove_file_from_vector_store(vector_store_id, it->second.openai_file_id);
+                } catch (const std::exception& e) {
+                    // Ignore "not found" errors - file may already be removed
+                    std::string err(e.what());
+                    if (err.find("No such") == std::string::npos &&
+                        err.find("not found") == std::string::npos) {
+                        throw;  // Re-throw other errors
+                    }
+                }
+
+                try {
+                    client.delete_file(it->second.openai_file_id);
+                } catch (const std::exception& e) {
+                    // Ignore "not found" errors - file may already be deleted
+                    std::string err(e.what());
+                    if (err.find("No such") == std::string::npos &&
+                        err.find("not found") == std::string::npos) {
+                        throw;  // Re-throw other errors
+                    }
+                }
 
                 // Upload new version
                 std::string new_file_id = client.upload_file(filepath);

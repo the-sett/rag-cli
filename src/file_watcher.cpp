@@ -4,6 +4,10 @@
 #include "openai_client.hpp"
 #include "console.hpp"
 #include <iostream>
+#include <filesystem>
+#include <unordered_set>
+
+namespace fs = std::filesystem;
 
 namespace rag {
 
@@ -16,6 +20,13 @@ FileWatcher::FileWatcher(
     , client_(client)
     , poll_interval_seconds_(poll_interval_seconds)
 {
+#ifdef __linux__
+    // Create inotify watcher with 500ms debounce
+    inotify_watcher_ = std::make_unique<InotifyWatcher>(500);
+    inotify_watcher_->on_change([this]() {
+        check_and_reindex();
+    });
+#endif
 }
 
 FileWatcher::~FileWatcher() {
@@ -34,9 +45,20 @@ void FileWatcher::start() {
     stop_requested_.store(false);
     running_.store(true);
 
+#ifdef __linux__
+    if (use_inotify_ && inotify_watcher_) {
+        setup_watches();
+        inotify_watcher_->start();
+        std::cerr << "[FileWatcher] Started (inotify mode - passive)" << std::endl;
+        return;
+    }
+#endif
+
+    // Fallback to polling
     watch_thread_ = std::thread([this]() {
         watch_loop();
     });
+    std::cerr << "[FileWatcher] Started (polling mode - " << poll_interval_seconds_ << "s interval)" << std::endl;
 }
 
 void FileWatcher::stop() {
@@ -45,6 +67,12 @@ void FileWatcher::stop() {
     }
 
     stop_requested_.store(true);
+
+#ifdef __linux__
+    if (inotify_watcher_ && inotify_watcher_->is_running()) {
+        inotify_watcher_->stop();
+    }
+#endif
 
     if (watch_thread_.joinable()) {
         watch_thread_.join();
@@ -123,6 +151,68 @@ void FileWatcher::check_and_reindex() {
     } catch (const std::exception& e) {
         std::cerr << "[FileWatcher] Reindex error: " << e.what() << std::endl;
     }
+}
+
+void FileWatcher::setup_watches() {
+#ifdef __linux__
+    if (!inotify_watcher_) {
+        return;
+    }
+
+    // Extract directories to watch from file patterns
+    std::unordered_set<std::string> dirs_to_watch;
+
+    for (const auto& pattern : settings_.file_patterns) {
+        fs::path p(pattern);
+
+        // Check if pattern is a glob pattern
+        bool is_glob = pattern.find('*') != std::string::npos ||
+                       pattern.find('?') != std::string::npos ||
+                       pattern.find('[') != std::string::npos;
+
+        if (!is_glob) {
+            // Literal path
+            if (fs::exists(p)) {
+                if (fs::is_directory(p)) {
+                    dirs_to_watch.insert(fs::absolute(p).string());
+                } else {
+                    dirs_to_watch.insert(fs::absolute(p.parent_path()).string());
+                }
+            }
+        } else {
+            // Glob pattern - find base directory
+            fs::path base_dir = ".";
+            for (const auto& component : p) {
+                std::string comp_str = component.string();
+                bool comp_is_glob = comp_str.find('*') != std::string::npos ||
+                                    comp_str.find('?') != std::string::npos ||
+                                    comp_str.find('[') != std::string::npos;
+                if (comp_is_glob) {
+                    break;
+                }
+                if (base_dir == ".") {
+                    base_dir = component;
+                } else {
+                    base_dir /= component;
+                }
+            }
+
+            if (fs::exists(base_dir) && fs::is_directory(base_dir)) {
+                dirs_to_watch.insert(fs::absolute(base_dir).string());
+            } else {
+                // Watch current directory as fallback
+                dirs_to_watch.insert(fs::absolute(".").string());
+            }
+        }
+    }
+
+    // Add watches for all directories
+    for (const auto& dir : dirs_to_watch) {
+        inotify_watcher_->add_watch(dir);
+    }
+
+    std::cerr << "[FileWatcher] Watching " << dirs_to_watch.size() << " directories" << std::endl;
+#endif
 }
 
 } // namespace rag

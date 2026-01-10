@@ -4,8 +4,8 @@
  * File watcher for automatic reindexing.
  *
  * Monitors files matching the configured patterns and automatically
- * reindexes when changes are detected. Uses a polling-based approach
- * with debouncing to batch rapid changes.
+ * reindexes when changes are detected. On Linux, uses inotify for
+ * efficient event-based watching. Falls back to polling on other platforms.
  */
 
 #include "settings.hpp"
@@ -15,6 +15,11 @@
 #include <atomic>
 #include <mutex>
 #include <chrono>
+#include <memory>
+
+#ifdef __linux__
+#include "inotify_watcher.hpp"
+#endif
 
 namespace rag {
 
@@ -78,11 +83,14 @@ public:
     bool is_running() const { return running_.load(); }
 
 private:
-    // Background thread function
+    // Background thread function (polling fallback)
     void watch_loop();
 
     // Check for changes and reindex if needed
     void check_and_reindex();
+
+    // Setup directory watches based on file patterns
+    void setup_watches();
 
     Settings& settings_;
     OpenAIClient& client_;
@@ -94,6 +102,11 @@ private:
     std::mutex reindex_mutex_;  // Protects settings during reindex
 
     ReindexCallback on_reindex_callback_;
+
+#ifdef __linux__
+    std::unique_ptr<InotifyWatcher> inotify_watcher_;
+    bool use_inotify_{true};  // Can be disabled if inotify fails
+#endif
 };
 
 } // namespace rag
