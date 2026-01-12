@@ -48,4 +48,33 @@ inline const std::unordered_set<std::string> SUPPORTED_EXTENSIONS = {
 
 constexpr const char* OPENAI_API_BASE = "https://api.openai.com/v1";  // OpenAI API base URL.
 
+// ========== Model Token Limits ==========
+
+/**
+ * Default maximum context window to use for models not in MODEL_MAX_CONTEXT_TOKENS.
+ */
+constexpr int DEFAULT_MAX_CONTEXT_TOKENS = 128000;
+
+/**
+ * Static table of known models and their max context windows.
+ * Used to compute context fullness and trigger compaction.
+ */
+inline const std::unordered_map<std::string, int> MODEL_MAX_CONTEXT_TOKENS = {
+    { "gpt-4o-2024-08-06", 128000 },
+    { "gpt-4o-mini",       128000 },
+    { "gpt-4.1-mini",      1047576 },
+    { "gpt-4.1",           1047576 },
+    { "o3",                200000 },
+    { "o4-mini",           200000 },
+};
+
+/**
+ * Returns the max context window for a model, or DEFAULT_MAX_CONTEXT_TOKENS
+ * if the model is not in the static table.
+ */
+inline int get_max_context_tokens_for_model(const std::string& model) {
+    auto it = MODEL_MAX_CONTEXT_TOKENS.find(model);
+    return (it != MODEL_MAX_CONTEXT_TOKENS.end()) ? it->second : DEFAULT_MAX_CONTEXT_TOKENS;
+}
+
 } // namespace rag

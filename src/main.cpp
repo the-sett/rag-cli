@@ -606,7 +606,7 @@ int main(int argc, char* argv[]) {
         };
 
         try {
-            std::string response_id;
+            StreamResult result;
             if (render_markdown) {
                 // Use markdown renderer for interactive mode.
                 MarkdownRenderer renderer([&](const std::string& formatted) {
@@ -614,9 +614,9 @@ int main(int argc, char* argv[]) {
                     console.flush();
                 });
 
-                response_id = client.stream_response(
+                result = client.stream_response(
                     settings.model,
-                    chat.get_conversation(),
+                    chat.get_api_window(),
                     settings.vector_store_id,
                     reasoning_effort,
                     chat.get_openai_response_id(),
@@ -639,9 +639,9 @@ int main(int argc, char* argv[]) {
                 renderer.finish();
             } else {
                 // Raw output for non-interactive or --plain mode.
-                response_id = client.stream_response(
+                result = client.stream_response(
                     settings.model,
-                    chat.get_conversation(),
+                    chat.get_api_window(),
                     settings.vector_store_id,
                     reasoning_effort,
                     chat.get_openai_response_id(),
@@ -685,9 +685,12 @@ int main(int argc, char* argv[]) {
             }
 
             // Store the response ID for conversation continuation.
-            if (!response_id.empty()) {
-                chat.set_openai_response_id(response_id);
+            if (!result.response_id.empty()) {
+                chat.set_openai_response_id(result.response_id);
             }
+
+            // Check if we need to compact the conversation window
+            maybe_compact_chat_window(client, chat, settings.model, result.usage);
         } catch (const std::exception& e) {
             // Stop spinner on error.
             stop_spinner.store(true);

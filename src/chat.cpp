@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iomanip>
 #include <sstream>
+#include <iostream>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -16,9 +17,13 @@ ChatSession::ChatSession() = default;
 ChatSession::ChatSession(const std::string& system_prompt, const std::string& log_dir)
     : log_dir_(log_dir)
     , system_prompt_(system_prompt)
+    , api_window_(json::array())
 {
     // Add system message to conversation
     conversation_.push_back({"system", system_prompt});
+
+    // Also add to API window
+    api_window_.push_back({{"role", "system"}, {"content", system_prompt}});
 
     // Session starts in pending state - no ID, no files yet
     // Files will be created when first real user message is added
@@ -57,6 +62,10 @@ std::unique_ptr<ChatSession> ChatSession::load(const std::string& json_path,
         // Add system message first
         session->conversation_.push_back({"system", system_prompt});
 
+        // Initialize API window with system message
+        session->api_window_ = json::array();
+        session->api_window_.push_back({{"role", "system"}, {"content", system_prompt}});
+
         // Load conversation messages
         if (j.contains("messages") && j["messages"].is_array()) {
             for (const auto& msg : j["messages"]) {
@@ -64,6 +73,8 @@ std::unique_ptr<ChatSession> ChatSession::load(const std::string& json_path,
                 std::string content = msg.value("content", "");
                 if (!role.empty() && role != "system") {
                     session->conversation_.push_back({role, content});
+                    // Also add to API window
+                    session->api_window_.push_back({{"role", role}, {"content", content}});
                 }
             }
         }
@@ -129,6 +140,7 @@ void ChatSession::add_user_message(const std::string& content) {
     materialize();
 
     conversation_.push_back({"user", content});
+    api_window_.push_back({{"role", "user"}, {"content", content}});
     log("user", content);
     update_title(content);
     save_json();
@@ -137,10 +149,12 @@ void ChatSession::add_user_message(const std::string& content) {
 void ChatSession::add_hidden_user_message(const std::string& content) {
     // Just add to conversation - no materialization, no logging, no saving
     conversation_.push_back({"user", content});
+    api_window_.push_back({{"role", "user"}, {"content", content}});
 }
 
 void ChatSession::add_assistant_message(const std::string& content) {
     conversation_.push_back({"assistant", content});
+    api_window_.push_back({{"role", "assistant"}, {"content", content}});
 
     // Only log/save if materialized
     if (is_materialized()) {
@@ -228,6 +242,47 @@ void ChatSession::update_title(const std::string& user_message) {
     }
 
     title_ = first_line;
+}
+
+void maybe_compact_chat_window(
+    OpenAIClient& client,
+    ChatSession& session,
+    const std::string& model,
+    const ResponseUsage& usage
+) {
+    // Get max context window for this model
+    const int max_ctx = get_max_context_tokens_for_model(model);
+    if (max_ctx <= 0) {
+        return;  // Safety check
+    }
+
+    // Calculate how full the context window is
+    const double fullness = static_cast<double>(usage.input_tokens) / static_cast<double>(max_ctx);
+
+    // Only compact if we're over 90% of the context window
+    if (fullness <= 0.9) {
+        return;
+    }
+
+    const std::string& response_id = session.get_openai_response_id();
+    if (response_id.empty()) {
+        return;  // No response ID to compact
+    }
+
+    std::cerr << "[Compact] Context is " << static_cast<int>(fullness * 100)
+              << "% full (" << usage.input_tokens << "/" << max_ctx
+              << " tokens), compacting..." << std::endl;
+
+    try {
+        nlohmann::json compacted = client.compact_window(model, response_id);
+        session.set_api_window(compacted);
+        // Clear response ID - subsequent calls should use the compacted input directly
+        session.set_openai_response_id("");
+        std::cerr << "[Compact] Window compacted successfully" << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << "[Compact] Warning: Failed to compact window: " << e.what() << std::endl;
+        // Don't fail the overall request if compaction fails
+    }
 }
 
 } // namespace rag

@@ -38,6 +38,24 @@ struct Message {
 };
 
 /**
+ * Token usage information for a single Responses API call.
+ */
+struct ResponseUsage {
+    int input_tokens = 0;       // Tokens in the prompt window.
+    int output_tokens = 0;      // Tokens generated in the answer.
+    int reasoning_tokens = 0;   // For reasoning models; 0 otherwise.
+};
+
+/**
+ * Result of a streaming Responses call.
+ * Includes the response ID for continuation and token usage.
+ */
+struct StreamResult {
+    std::string response_id;    // Response ID returned by the API.
+    ResponseUsage usage;        // Token usage reported by the API.
+};
+
+/**
  * Callback types for streaming responses.
  */
 using OnTextCallback = std::function<void(const std::string&)>;
@@ -111,10 +129,23 @@ public:
     // The on_text callback is invoked for each text delta received.
     // If previous_response_id is provided, continues an existing conversation.
     // The cancel_check callback is polled to allow cancellation (optional).
-    // Returns the new response ID for conversation continuation.
-    std::string stream_response(
+    // Returns StreamResult with response ID and token usage.
+    StreamResult stream_response(
         const std::string& model,
         const std::vector<Message>& conversation,
+        const std::string& vector_store_id,
+        const std::string& reasoning_effort,
+        const std::string& previous_response_id,
+        std::function<void(const std::string&)> on_text,
+        CancelCallback cancel_check = nullptr
+    );
+
+    // Overload that accepts JSON input directly (for compacted conversations).
+    // When previous_response_id is provided, only the last user message is sent.
+    // Otherwise, the full input array is sent (which may contain compaction items).
+    StreamResult stream_response(
+        const std::string& model,
+        const nlohmann::json& input,
         const std::string& vector_store_id,
         const std::string& reasoning_effort,
         const std::string& previous_response_id,
@@ -131,8 +162,8 @@ public:
     //   It should return a string result that will be sent back to OpenAI.
     // The additional_tools parameter contains function tool definitions.
     // The cancel_check callback is polled to allow cancellation (optional).
-    // Returns the new response ID for conversation continuation.
-    std::string stream_response_with_tools(
+    // Returns StreamResult with response ID and token usage.
+    StreamResult stream_response_with_tools(
         const std::string& model,
         const std::vector<Message>& conversation,
         const std::string& vector_store_id,
@@ -143,6 +174,24 @@ public:
         OnToolCallWithResultCallback on_tool_call,
         CancelCallback cancel_check = nullptr
     );
+
+    // Overload that accepts JSON input directly (for compacted conversations).
+    StreamResult stream_response_with_tools(
+        const std::string& model,
+        const nlohmann::json& input,
+        const std::string& vector_store_id,
+        const std::string& reasoning_effort,
+        const std::string& previous_response_id,
+        const nlohmann::json& additional_tools,
+        OnTextCallback on_text,
+        OnToolCallWithResultCallback on_tool_call,
+        CancelCallback cancel_check = nullptr
+    );
+
+    // Compacts a long-running conversation window.
+    // Calls the /responses/compact endpoint with the previous response ID and
+    // returns the compacted window to use as input for the next /responses call.
+    nlohmann::json compact_window(const std::string& model, const std::string& previous_response_id);
 
 private:
     std::string api_key_;  // OpenAI API key.

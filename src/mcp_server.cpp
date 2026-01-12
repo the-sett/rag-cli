@@ -329,9 +329,9 @@ json MCPServer::tool_query(const json& args) {
     std::string full_response;
 
     try {
-        std::string response_id = client_.stream_response(
+        StreamResult result = client_.stream_response(
             model_,
-            session->get_conversation(),
+            session->get_api_window(),
             vector_store_id_,
             reasoning_effort_,
             session->get_openai_response_id(),
@@ -342,12 +342,15 @@ json MCPServer::tool_query(const json& args) {
         );
 
         // Store the response ID for conversation continuation
-        if (!response_id.empty()) {
-            session->set_openai_response_id(response_id);
+        if (!result.response_id.empty()) {
+            session->set_openai_response_id(result.response_id);
         }
 
         // Add assistant response to conversation
         session->add_assistant_message(full_response);
+
+        // Check if we need to compact the conversation window
+        maybe_compact_chat_window(client_, *session, model_, result.usage);
 
         // Update settings with chat info
         update_settings(session);

@@ -748,7 +748,7 @@ void OpenAIClient::delete_file(const std::string& file_id) {
     }
 }
 
-std::string OpenAIClient::stream_response(
+StreamResult OpenAIClient::stream_response(
     const std::string& model,
     const std::vector<Message>& conversation,
     const std::string& vector_store_id,
@@ -801,8 +801,9 @@ std::string OpenAIClient::stream_response(
         body["previous_response_id"] = previous_response_id;
     }
 
-    // Track response ID and errors during streaming.
+    // Track response ID, usage, and errors during streaming.
     std::string response_id;
+    ResponseUsage usage;
     std::string stream_error;
 
     // Stream the response.
@@ -820,6 +821,21 @@ std::string OpenAIClient::stream_response(
                 std::string delta = event.value("delta", "");
                 if (!delta.empty() && on_text) {
                     on_text(delta);
+                }
+            } else if (event_type == "response.completed") {
+                // Capture token usage from completed response
+                if (event.contains("response") && event["response"].contains("usage")) {
+                    auto u = event["response"]["usage"];
+                    if (u.contains("input_tokens")) {
+                        usage.input_tokens = u["input_tokens"].get<int>();
+                    }
+                    if (u.contains("output_tokens")) {
+                        usage.output_tokens = u["output_tokens"].get<int>();
+                    }
+                    if (u.contains("output_tokens_details") &&
+                        u["output_tokens_details"].contains("reasoning_tokens")) {
+                        usage.reasoning_tokens = u["output_tokens_details"]["reasoning_tokens"].get<int>();
+                    }
                 }
             } else if (event_type == "error") {
                 // Capture error from the stream.
@@ -841,9 +857,9 @@ std::string OpenAIClient::stream_response(
         }
     }, cancel_check);
 
-    // If cancelled, return empty string to indicate cancellation
+    // If cancelled, return empty result to indicate cancellation
     if (!completed) {
-        return "";
+        return StreamResult{"", {}};
     }
 
     // Throw if we encountered an error during streaming.
@@ -851,10 +867,124 @@ std::string OpenAIClient::stream_response(
         throw std::runtime_error(stream_error);
     }
 
-    return response_id;
+    return StreamResult{response_id, usage};
 }
 
-std::string OpenAIClient::stream_response_with_tools(
+StreamResult OpenAIClient::stream_response(
+    const std::string& model,
+    const nlohmann::json& input_window,
+    const std::string& vector_store_id,
+    const std::string& reasoning_effort,
+    const std::string& previous_response_id,
+    std::function<void(const std::string&)> on_text,
+    CancelCallback cancel_check
+) {
+    std::string url = std::string(OPENAI_API_BASE) + "/responses";
+
+    // Build input JSON.
+    // When using previous_response_id, only send the latest user message
+    // (the API maintains conversation context server-side).
+    // Otherwise, send the full input window (which may contain compaction items).
+    json input = json::array();
+    if (!previous_response_id.empty() && input_window.is_array() && !input_window.empty()) {
+        // Find the last user message to send
+        for (auto it = input_window.rbegin(); it != input_window.rend(); ++it) {
+            if (it->contains("role") && (*it)["role"] == "user") {
+                input.push_back(*it);
+                break;
+            }
+        }
+    } else {
+        // No previous response - send full input window
+        input = input_window;
+    }
+
+    // Build request body.
+    json body = {
+        {"model", model},
+        {"input", input},
+        {"stream", true},
+        {"tools", json::array({
+            {
+                {"type", "file_search"},
+                {"vector_store_ids", json::array({vector_store_id})}
+            }
+        })}
+    };
+
+    if (!reasoning_effort.empty()) {
+        body["reasoning"] = {{"effort", reasoning_effort}};
+    }
+
+    // Add previous_response_id for conversation continuation
+    if (!previous_response_id.empty()) {
+        body["previous_response_id"] = previous_response_id;
+    }
+
+    // Track response ID, usage, and errors during streaming.
+    std::string response_id;
+    ResponseUsage usage;
+    std::string stream_error;
+
+    // Stream the response.
+    bool completed = http_post_stream(url, body, [&](const std::string& data) {
+        try {
+            json event = json::parse(data);
+            std::string event_type = event.value("type", "");
+
+            if (event_type == "response.created") {
+                if (event.contains("response") && event["response"].contains("id")) {
+                    response_id = event["response"]["id"].get<std::string>();
+                }
+            } else if (event_type == "response.output_text.delta") {
+                std::string delta = event.value("delta", "");
+                if (!delta.empty() && on_text) {
+                    on_text(delta);
+                }
+            } else if (event_type == "response.completed") {
+                if (event.contains("response") && event["response"].contains("usage")) {
+                    auto u = event["response"]["usage"];
+                    if (u.contains("input_tokens")) {
+                        usage.input_tokens = u["input_tokens"].get<int>();
+                    }
+                    if (u.contains("output_tokens")) {
+                        usage.output_tokens = u["output_tokens"].get<int>();
+                    }
+                    if (u.contains("output_tokens_details") &&
+                        u["output_tokens_details"].contains("reasoning_tokens")) {
+                        usage.reasoning_tokens = u["output_tokens_details"]["reasoning_tokens"].get<int>();
+                    }
+                }
+            } else if (event_type == "error") {
+                if (event.contains("error") && event["error"].contains("message")) {
+                    stream_error = event["error"]["message"].get<std::string>();
+                } else {
+                    stream_error = "Unknown API error";
+                }
+            } else if (event_type == "response.failed") {
+                if (event.contains("response") &&
+                    event["response"].contains("error") &&
+                    event["response"]["error"].contains("message")) {
+                    stream_error = event["response"]["error"]["message"].get<std::string>();
+                }
+            }
+        } catch (const json::exception&) {
+            // Ignore malformed JSON in stream.
+        }
+    }, cancel_check);
+
+    if (!completed) {
+        return StreamResult{"", {}};
+    }
+
+    if (!stream_error.empty()) {
+        throw std::runtime_error(stream_error);
+    }
+
+    return StreamResult{response_id, usage};
+}
+
+StreamResult OpenAIClient::stream_response_with_tools(
     const std::string& model,
     const std::vector<Message>& conversation,
     const std::string& vector_store_id,
@@ -918,10 +1048,14 @@ std::string OpenAIClient::stream_response_with_tools(
         body["previous_response_id"] = current_response_id;
     }
 
+    // Track cumulative usage across all calls in this turn
+    ResponseUsage total_usage;
+
     // Loop to handle tool calls - after each tool call, we submit results and continue
     while (true) {
-        // Track response ID, errors, and tool calls during streaming.
+        // Track response ID, usage, errors, and tool calls during streaming.
         std::string response_id;
+        ResponseUsage call_usage;
         std::string stream_error;
 
         // Collect tool calls during this response
@@ -952,6 +1086,21 @@ std::string OpenAIClient::stream_response_with_tools(
                     std::string delta = event.value("delta", "");
                     if (!delta.empty() && on_text) {
                         on_text(delta);
+                    }
+                } else if (event_type == "response.completed") {
+                    // Capture token usage from completed response
+                    if (event.contains("response") && event["response"].contains("usage")) {
+                        auto u = event["response"]["usage"];
+                        if (u.contains("input_tokens")) {
+                            call_usage.input_tokens = u["input_tokens"].get<int>();
+                        }
+                        if (u.contains("output_tokens")) {
+                            call_usage.output_tokens = u["output_tokens"].get<int>();
+                        }
+                        if (u.contains("output_tokens_details") &&
+                            u["output_tokens_details"].contains("reasoning_tokens")) {
+                            call_usage.reasoning_tokens = u["output_tokens_details"]["reasoning_tokens"].get<int>();
+                        }
                     }
                 } else if (event_type == "response.output_item.added") {
                     // Check if this is a function call
@@ -1001,9 +1150,14 @@ std::string OpenAIClient::stream_response_with_tools(
             }
         }, cancel_check);
 
-        // If cancelled, return empty string to indicate cancellation
+        // Accumulate usage from this call
+        total_usage.input_tokens += call_usage.input_tokens;
+        total_usage.output_tokens += call_usage.output_tokens;
+        total_usage.reasoning_tokens += call_usage.reasoning_tokens;
+
+        // If cancelled, return empty result to indicate cancellation
         if (!completed) {
-            return "";
+            return StreamResult{"", {}};
         }
 
         // Throw if we encountered an error during streaming.
@@ -1013,7 +1167,7 @@ std::string OpenAIClient::stream_response_with_tools(
 
         // If no tool calls, we're done
         if (pending_tool_calls.empty()) {
-            return response_id;
+            return StreamResult{response_id, total_usage};
         }
 
         // Execute tool calls and collect results
@@ -1057,6 +1211,227 @@ std::string OpenAIClient::stream_response_with_tools(
 
         verbose_log("MCP", "Submitting tool results and continuing...");
     }
+}
+
+StreamResult OpenAIClient::stream_response_with_tools(
+    const std::string& model,
+    const nlohmann::json& input_window,
+    const std::string& vector_store_id,
+    const std::string& reasoning_effort,
+    const std::string& previous_response_id,
+    const nlohmann::json& additional_tools,
+    OnTextCallback on_text,
+    OnToolCallWithResultCallback on_tool_call,
+    CancelCallback cancel_check
+) {
+    std::string url = std::string(OPENAI_API_BASE) + "/responses";
+
+    // Build input JSON.
+    // When using previous_response_id, only send the latest user message.
+    // Otherwise, send the full input window (which may contain compaction items).
+    json input = json::array();
+    if (!previous_response_id.empty() && input_window.is_array() && !input_window.empty()) {
+        // Find the last user message to send
+        for (auto it = input_window.rbegin(); it != input_window.rend(); ++it) {
+            if (it->contains("role") && (*it)["role"] == "user") {
+                input.push_back(*it);
+                break;
+            }
+        }
+    } else {
+        // No previous response - send full input window
+        input = input_window;
+    }
+
+    // Build tools array - start with file_search, add additional tools
+    json tools = json::array({
+        {
+            {"type", "file_search"},
+            {"vector_store_ids", json::array({vector_store_id})}
+        }
+    });
+
+    for (const auto& tool : additional_tools) {
+        tools.push_back(tool);
+    }
+
+    // Build request body.
+    json body = {
+        {"model", model},
+        {"input", input},
+        {"stream", true},
+        {"tools", tools}
+    };
+
+    if (!reasoning_effort.empty()) {
+        body["reasoning"] = {{"effort", reasoning_effort}};
+    }
+
+    std::string current_response_id = previous_response_id;
+
+    ResponseUsage total_usage;
+    std::string full_text;
+
+    while (true) {
+        if (!current_response_id.empty()) {
+            body["previous_response_id"] = current_response_id;
+        }
+
+        std::string response_id;
+        ResponseUsage call_usage;
+        std::string stream_error;
+        std::string current_call_id;
+        std::string current_tool_name;
+        std::string current_arguments;
+        std::vector<std::tuple<std::string, std::string, std::string>> pending_tool_calls;
+
+        bool completed = http_post_stream(url, body, [&](const std::string& data) {
+            try {
+                json event = json::parse(data);
+                std::string event_type = event.value("type", "");
+
+                if (event_type == "response.created") {
+                    if (event.contains("response") && event["response"].contains("id")) {
+                        response_id = event["response"]["id"].get<std::string>();
+                        verbose_log("MCP", "Response created with ID: " + response_id);
+                    }
+                } else if (event_type == "response.output_text.delta") {
+                    std::string delta = event.value("delta", "");
+                    if (!delta.empty()) {
+                        full_text += delta;
+                        if (on_text) {
+                            on_text(delta);
+                        }
+                    }
+                } else if (event_type == "response.completed") {
+                    if (event.contains("response") && event["response"].contains("usage")) {
+                        auto u = event["response"]["usage"];
+                        if (u.contains("input_tokens")) {
+                            call_usage.input_tokens = u["input_tokens"].get<int>();
+                        }
+                        if (u.contains("output_tokens")) {
+                            call_usage.output_tokens = u["output_tokens"].get<int>();
+                        }
+                        if (u.contains("output_tokens_details") &&
+                            u["output_tokens_details"].contains("reasoning_tokens")) {
+                            call_usage.reasoning_tokens = u["output_tokens_details"]["reasoning_tokens"].get<int>();
+                        }
+                    }
+                } else if (event_type == "response.output_item.added") {
+                    if (event.contains("item") && event["item"].contains("type")) {
+                        if (event["item"]["type"] == "function_call") {
+                            current_call_id = event["item"].value("call_id", "");
+                            current_tool_name = event["item"].value("name", "");
+                            current_arguments.clear();
+                            verbose_log("MCP", "Tool call started: " + current_tool_name + " (id: " + current_call_id + ")");
+                        }
+                    }
+                } else if (event_type == "response.function_call_arguments.delta") {
+                    std::string delta = event.value("delta", "");
+                    current_arguments += delta;
+                } else if (event_type == "response.function_call_arguments.done") {
+                    std::string call_id = event.value("call_id", current_call_id);
+                    std::string name = event.value("name", current_tool_name);
+                    std::string args_str = event.value("arguments", current_arguments);
+
+                    verbose_log("MCP", "Tool call complete: " + name + " args: " + args_str);
+                    pending_tool_calls.push_back({call_id, name, args_str});
+
+                    current_call_id.clear();
+                    current_tool_name.clear();
+                    current_arguments.clear();
+                } else if (event_type == "error") {
+                    if (event.contains("error") && event["error"].contains("message")) {
+                        stream_error = event["error"]["message"].get<std::string>();
+                    } else {
+                        stream_error = "Unknown API error";
+                    }
+                } else if (event_type == "response.failed") {
+                    if (event.contains("response") &&
+                        event["response"].contains("error") &&
+                        event["response"]["error"].contains("message")) {
+                        stream_error = event["response"]["error"]["message"].get<std::string>();
+                    }
+                }
+            } catch (const json::exception&) {
+                // Ignore malformed JSON in stream.
+            }
+        }, cancel_check);
+
+        total_usage.input_tokens = call_usage.input_tokens;
+        total_usage.output_tokens += call_usage.output_tokens;
+        total_usage.reasoning_tokens += call_usage.reasoning_tokens;
+
+        if (!completed) {
+            return StreamResult{"", {}};
+        }
+
+        if (!stream_error.empty()) {
+            throw std::runtime_error(stream_error);
+        }
+
+        current_response_id = response_id;
+
+        if (pending_tool_calls.empty()) {
+            return StreamResult{response_id, total_usage};
+        }
+
+        json tool_outputs = json::array();
+        for (const auto& [call_id, name, args_str] : pending_tool_calls) {
+            json args;
+            try {
+                args = json::parse(args_str);
+            } catch (const json::exception&) {
+                args = json::object();
+            }
+
+            verbose_log("MCP", "Executing tool: " + name);
+            std::string result = on_tool_call(call_id, name, args);
+            verbose_log("MCP", "Tool result: " + result.substr(0, 200) + (result.length() > 200 ? "..." : ""));
+
+            tool_outputs.push_back({
+                {"type", "function_call_output"},
+                {"call_id", call_id},
+                {"output", result}
+            });
+        }
+
+        body = {
+            {"model", model},
+            {"input", tool_outputs},
+            {"stream", true},
+            {"tools", tools},
+            {"previous_response_id", current_response_id}
+        };
+
+        if (!reasoning_effort.empty()) {
+            body["reasoning"] = {{"effort", reasoning_effort}};
+        }
+
+        verbose_log("MCP", "Submitting tool results and continuing...");
+    }
+}
+
+nlohmann::json OpenAIClient::compact_window(const std::string& model, const std::string& previous_response_id) {
+    std::string url = std::string(OPENAI_API_BASE) + "/responses/compact";
+
+    json body = {
+        {"model", model},
+        {"previous_response_id", previous_response_id}
+    };
+
+    std::string response_str = http_post_json(url, body);
+    json j = json::parse(response_str);
+
+    if (j.contains("error")) {
+        throw std::runtime_error("Compact error: " + j["error"]["message"].get<std::string>());
+    }
+
+    if (!j.contains("output")) {
+        throw std::runtime_error("Compact error: missing 'output' field in response");
+    }
+
+    return j["output"];
 }
 
 } // namespace rag

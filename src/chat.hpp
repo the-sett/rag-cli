@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <nlohmann/json.hpp>
 
 namespace rag {
 
@@ -88,6 +89,12 @@ public:
     // Sets the agent ID for this chat.
     void set_agent_id(const std::string& id) { agent_id_ = id; }
 
+    // Returns the current API input window (array of items) for this chat.
+    const nlohmann::json& get_api_window() const { return api_window_; }
+
+    // Replaces the API input window (used after compaction).
+    void set_api_window(const nlohmann::json& window) { api_window_ = window; }
+
 private:
     std::string log_dir_;                // Directory for log files
     std::string system_prompt_;          // System prompt (for pending state)
@@ -97,6 +104,7 @@ private:
     std::string openai_response_id_;     // Last OpenAI response ID
     std::string agent_id_;               // Agent ID if started with an agent
     std::vector<Message> conversation_;  // In-memory conversation history.
+    nlohmann::json api_window_;          // Current input window for API calls (may contain compaction items)
     size_t visible_start_index_ = 0;     // Index where visible messages begin (after hidden intro)
     std::string log_path_;               // Path to the markdown log file.
     std::string json_path_;              // Path to the JSON file.
@@ -118,5 +126,21 @@ private:
     // Extracts title from first user message.
     void update_title(const std::string& user_message);
 };
+
+/**
+ * Checks if the conversation window needs compaction (>90% of max context)
+ * and compacts it if necessary.
+ *
+ * @param client OpenAI client for API calls
+ * @param session Chat session to potentially compact
+ * @param model Model being used (for looking up max context)
+ * @param usage Token usage from the last response
+ */
+void maybe_compact_chat_window(
+    OpenAIClient& client,
+    ChatSession& session,
+    const std::string& model,
+    const ResponseUsage& usage
+);
 
 } // namespace rag
