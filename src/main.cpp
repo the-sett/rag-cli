@@ -141,12 +141,51 @@ std::string build_system_prompt() {
 Settings load_or_create_settings(
     const std::vector<std::string>& files,
     bool reindex,
+    bool rebuild,
     bool non_interactive,
     OpenAIClient& client,
     Console& console
 ) {
     auto existing = load_settings();
     bool has_valid_settings = existing.has_value() && existing->is_valid();
+
+    // If rebuild is requested with existing valid settings, delete everything and recreate.
+    if (rebuild && has_valid_settings) {
+        Settings settings = *existing;
+
+        // Use new file patterns if provided, otherwise use stored patterns.
+        std::vector<std::string> patterns_to_use = files.empty() ? settings.file_patterns : files;
+
+        if (patterns_to_use.empty()) {
+            console.print_error("Error: No file patterns available for rebuild");
+            console.println("Provide file patterns or ensure .crag.json has stored patterns.");
+            std::exit(1);
+        }
+
+        // Update patterns if new ones were provided.
+        if (!files.empty()) {
+            settings.file_patterns = files;
+        }
+
+        // Rebuild the vector store from scratch
+        std::string new_vector_store_id = rebuild_vector_store(
+            settings.vector_store_id,
+            patterns_to_use,
+            client,
+            console,
+            settings.indexed_files
+        );
+
+        if (new_vector_store_id.empty()) {
+            std::exit(1);
+        }
+
+        settings.vector_store_id = new_vector_store_id;
+
+        // Save updated settings.
+        save_settings(settings);
+        return settings;
+    }
 
     // If reindex is requested with existing valid settings, do incremental update.
     if (reindex && has_valid_settings) {
@@ -249,6 +288,7 @@ int main(int argc, char* argv[]) {
                "  crag 'docs/*.md'              Index markdown files and start chat\n"
                "  crag 'src/**/*.py' '*.md'     Index multiple patterns\n"
                "  crag --reindex 'knowledge/'   Re-index a directory\n"
+               "  crag --rebuild                Delete and rebuild vector store from scratch\n"
                "  crag                          Use existing index\n");
 
     std::vector<std::string> files;
@@ -256,6 +296,9 @@ int main(int argc, char* argv[]) {
 
     bool reindex = false;
     app.add_flag("--reindex", reindex, "Force re-upload + reindex files");
+
+    bool rebuild = false;
+    app.add_flag("--rebuild", rebuild, "Delete entire vector store and rebuild from scratch");
 
 
 
@@ -513,7 +556,7 @@ int main(int argc, char* argv[]) {
     OpenAIClient client(api_key);
 
     // Load or create settings.
-    Settings settings = load_or_create_settings(files, reindex, non_interactive, client, console);
+    Settings settings = load_or_create_settings(files, reindex, rebuild, non_interactive, client, console);
 
     // Determine reasoning effort.
     std::string reasoning_effort = settings.reasoning_effort;

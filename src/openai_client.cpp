@@ -748,6 +748,283 @@ void OpenAIClient::delete_file(const std::string& file_id) {
     }
 }
 
+void OpenAIClient::delete_vector_store(const std::string& vector_store_id) {
+    std::string url = std::string(OPENAI_API_BASE) + "/vector_stores/" + vector_store_id;
+
+    std::string response = http_delete(url);
+    json j = json::parse(response);
+
+    if (j.contains("error")) {
+        throw std::runtime_error("Failed to delete vector store: " + j["error"]["message"].get<std::string>());
+    }
+}
+
+// Context for tracking each delete operation in the multi handle
+struct MultiDeleteContext {
+    std::string file_id;
+    std::string response;
+    CURL* easy;
+    curl_slist* headers;
+    int retry_count;
+    long http_code;
+    bool removing_from_store;  // true = removing from vector store, false = deleting file
+};
+
+// Item in the delete queue
+struct DeleteQueueItem {
+    size_t index;
+    int retry_count;
+    bool removing_from_store;  // true = removing from vector store, false = deleting file
+};
+
+std::vector<DeleteResult> OpenAIClient::delete_files_parallel(
+    const std::string& vector_store_id,
+    const std::vector<std::string>& file_ids,
+    std::function<void(size_t completed, size_t total)> on_progress,
+    size_t max_parallel
+) {
+    if (file_ids.empty()) {
+        return {};
+    }
+
+    const int MAX_RETRIES = 5;
+    std::vector<DeleteResult> results;
+    results.reserve(file_ids.size());
+
+    // Initialize results with empty entries
+    for (const auto& fid : file_ids) {
+        results.push_back({fid, ""});
+    }
+
+    // Create multi handle
+    CURLM* multi = curl_multi_init();
+    if (!multi) {
+        throw std::runtime_error("Failed to initialize CURL multi handle");
+    }
+
+    // Track active deletes: maps easy handle to (result_index, context)
+    std::map<CURL*, std::pair<size_t, std::unique_ptr<MultiDeleteContext>>> active;
+
+    // Queue of files to delete - each file goes through two phases:
+    // 1. Remove from vector store
+    // 2. Delete file from storage
+    std::queue<DeleteQueueItem> pending;
+    for (size_t i = 0; i < file_ids.size(); ++i) {
+        pending.push({i, 0, true});  // Start with removing from vector store
+    }
+
+    size_t completed = 0;
+    size_t current_max_parallel = max_parallel;
+
+    // Lambda to start a new delete operation
+    auto start_delete = [&](const DeleteQueueItem& item) {
+        const std::string& file_id = file_ids[item.index];
+
+        auto ctx = std::make_unique<MultiDeleteContext>();
+        ctx->file_id = file_id;
+        ctx->retry_count = item.retry_count;
+        ctx->http_code = 0;
+        ctx->removing_from_store = item.removing_from_store;
+
+        CURL* easy = curl_easy_init();
+        if (!easy) {
+            results[item.index].error = "Failed to initialize CURL";
+            completed++;
+            return;
+        }
+
+        ctx->easy = easy;
+        ctx->headers = nullptr;
+        std::string auth_header = "Authorization: Bearer " + api_key_;
+        ctx->headers = curl_slist_append(ctx->headers, auth_header.c_str());
+
+        // Build URL based on operation phase
+        std::string url;
+        if (item.removing_from_store) {
+            url = std::string(OPENAI_API_BASE) + "/vector_stores/" + vector_store_id + "/files/" + file_id;
+        } else {
+            url = std::string(OPENAI_API_BASE) + "/files/" + file_id;
+        }
+
+        curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(easy, CURLOPT_CUSTOMREQUEST, "DELETE");
+        curl_easy_setopt(easy, CURLOPT_HTTPHEADER, ctx->headers);
+        curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, write_callback);
+        curl_easy_setopt(easy, CURLOPT_WRITEDATA, &ctx->response);
+
+        if (is_verbose()) {
+            curl_easy_setopt(easy, CURLOPT_VERBOSE, 1L);
+        }
+
+        curl_multi_add_handle(multi, easy);
+        active[easy] = {item.index, std::move(ctx)};
+
+        verbose_log("CURL", "Started " + std::string(item.removing_from_store ? "remove from store" : "delete file") +
+                   " (attempt " + std::to_string(item.retry_count + 1) + "): " + file_id);
+    };
+
+    // Start initial batch of deletes
+    while (!pending.empty() && active.size() < current_max_parallel) {
+        auto item = pending.front();
+        pending.pop();
+        start_delete(item);
+    }
+
+    // Main event loop
+    int still_running = 1;
+    while (still_running > 0 || !pending.empty()) {
+        // Perform transfers
+        CURLMcode mc = curl_multi_perform(multi, &still_running);
+        if (mc != CURLM_OK) {
+            verbose_err("CURL", std::string("curl_multi_perform failed: ") + curl_multi_strerror(mc));
+            break;
+        }
+
+        // Check for completed transfers
+        int msgs_left;
+        CURLMsg* msg;
+        while ((msg = curl_multi_info_read(multi, &msgs_left))) {
+            if (msg->msg == CURLMSG_DONE) {
+                CURL* easy = msg->easy_handle;
+                auto it = active.find(easy);
+                if (it == active.end()) continue;
+
+                size_t idx = it->second.first;
+                auto& ctx = it->second.second;
+
+                // Remove from multi handle
+                curl_multi_remove_handle(multi, easy);
+
+                // Get HTTP status code
+                curl_easy_getinfo(easy, CURLINFO_RESPONSE_CODE, &ctx->http_code);
+
+                // Determine outcome
+                bool should_retry = false;
+                bool is_not_found = false;
+                std::string error_msg;
+
+                CURLcode res = msg->data.result;
+                if (res != CURLE_OK) {
+                    error_msg = curl_easy_strerror(res);
+                    should_retry = true;  // Network errors are retryable
+                } else if (ctx->http_code == 429) {
+                    // Rate limited - reduce parallelism
+                    error_msg = "Rate limited (HTTP 429)";
+                    should_retry = true;
+                    if (current_max_parallel > 1) {
+                        current_max_parallel = current_max_parallel / 2;
+                        verbose_log("CURL", "Rate limited, reducing parallelism to " + std::to_string(current_max_parallel));
+                    }
+                } else if (ctx->http_code >= 500) {
+                    // Server error - retryable
+                    error_msg = "Server error (HTTP " + std::to_string(ctx->http_code) + ")";
+                    should_retry = true;
+                } else if (ctx->http_code == 404 || ctx->http_code == 400) {
+                    // Not found or bad request - check if it's a "not found" error (which we ignore)
+                    try {
+                        json j = json::parse(ctx->response);
+                        if (j.contains("error") && j["error"].contains("message")) {
+                            error_msg = j["error"]["message"].get<std::string>();
+                            if (error_msg.find("No such") != std::string::npos ||
+                                error_msg.find("not found") != std::string::npos) {
+                                is_not_found = true;
+                            }
+                        }
+                    } catch (...) {
+                        // Treat as not found if we can't parse
+                        is_not_found = true;
+                    }
+                } else if (ctx->http_code >= 400) {
+                    // Other client error
+                    try {
+                        json j = json::parse(ctx->response);
+                        if (j.contains("error") && j["error"].contains("message")) {
+                            error_msg = j["error"]["message"].get<std::string>();
+                        } else {
+                            error_msg = "HTTP " + std::to_string(ctx->http_code);
+                        }
+                    } catch (...) {
+                        error_msg = "HTTP " + std::to_string(ctx->http_code);
+                    }
+                }
+
+                int retry_count = ctx->retry_count;
+                std::string file_id = ctx->file_id;
+                bool was_removing_from_store = ctx->removing_from_store;
+                long http_code = ctx->http_code;
+
+                // Cleanup this context
+                curl_slist_free_all(ctx->headers);
+                curl_easy_cleanup(easy);
+                active.erase(it);
+
+                // Decide what to do next
+                if (http_code == 200 || is_not_found) {
+                    // Success or "not found" (which we treat as success)
+                    if (was_removing_from_store) {
+                        // Phase 1 complete, queue phase 2 (delete file)
+                        pending.push({idx, 0, false});
+                        verbose_log("CURL", "Removed from store: " + file_id + (is_not_found ? " (was not found)" : ""));
+                    } else {
+                        // Phase 2 complete, file fully deleted
+                        completed++;
+                        if (on_progress) {
+                            on_progress(completed, file_ids.size());
+                        }
+                        verbose_log("CURL", "Deleted file: " + file_id + (is_not_found ? " (was not found)" : ""));
+                    }
+                } else if (should_retry && retry_count < MAX_RETRIES) {
+                    // Transient error - retry same operation
+                    verbose_log("CURL", "Retrying (" + std::to_string(retry_count + 1) + "/" +
+                               std::to_string(MAX_RETRIES) + "): " + file_id + " - " + error_msg);
+                    pending.push({idx, retry_count + 1, was_removing_from_store});
+                } else {
+                    // Permanent failure
+                    results[idx].error = error_msg;
+                    completed++;
+                    if (on_progress) {
+                        on_progress(completed, file_ids.size());
+                    }
+                    verbose_log("CURL", "Failed to delete: " + file_id + " - " + error_msg);
+                }
+
+                // Start more deletes if we have capacity
+                while (!pending.empty() && active.size() < current_max_parallel) {
+                    auto item = pending.front();
+                    pending.pop();
+                    start_delete(item);
+                }
+            }
+        }
+
+        // If we have pending items but no active transfers, start more
+        while (!pending.empty() && active.size() < current_max_parallel) {
+            auto item = pending.front();
+            pending.pop();
+            start_delete(item);
+            // Update still_running since we added new transfers
+            curl_multi_perform(multi, &still_running);
+        }
+
+        // Wait for activity (with timeout to avoid spinning)
+        if (still_running > 0) {
+            curl_multi_wait(multi, nullptr, 0, 100, nullptr);
+        }
+    }
+
+    // Cleanup any remaining active handles (shouldn't happen normally)
+    for (auto& [easy, pair] : active) {
+        auto& ctx = pair.second;
+        curl_multi_remove_handle(multi, easy);
+        curl_slist_free_all(ctx->headers);
+        curl_easy_cleanup(easy);
+    }
+
+    curl_multi_cleanup(multi);
+
+    return results;
+}
+
 StreamResult OpenAIClient::stream_response(
     const std::string& model,
     const std::vector<Message>& conversation,

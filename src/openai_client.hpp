@@ -25,6 +25,15 @@ struct UploadResult {
 };
 
 /**
+ * Result of a single file deletion in a parallel batch.
+ */
+struct DeleteResult {
+    std::string file_id;       // OpenAI file ID that was deleted
+    std::string error;         // Error message (empty on success)
+    bool success() const { return error.empty(); }
+};
+
+/**
  * A chat message with role and content.
  */
 struct Message {
@@ -102,6 +111,16 @@ public:
     // Deletes a file from OpenAI storage.
     void delete_file(const std::string& file_id);
 
+    // Deletes multiple files in parallel using curl_multi.
+    // For each file, removes it from the vector store first, then deletes from storage.
+    // Uses up to max_parallel concurrent connections (default 8).
+    // Returns results for all files, including any errors.
+    std::vector<DeleteResult> delete_files_parallel(
+        const std::string& vector_store_id,
+        const std::vector<std::string>& file_ids,
+        std::function<void(size_t completed, size_t total)> on_progress = nullptr,
+        size_t max_parallel = 8);
+
     // ========== Vector Stores API ==========
 
     // Creates a new vector store with the given name. Returns the store ID.
@@ -122,6 +141,9 @@ public:
     // Removes a file from a vector store (does not delete the file itself).
     void remove_file_from_vector_store(const std::string& vector_store_id,
                                         const std::string& file_id);
+
+    // Deletes a vector store entirely.
+    void delete_vector_store(const std::string& vector_store_id);
 
     // ========== Responses API ==========
 

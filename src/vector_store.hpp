@@ -67,4 +67,24 @@ void update_vector_store(
     std::map<std::string, FileMetadata>& indexed_files
 );
 
+/**
+ * Completely rebuilds the vector store from scratch.
+ *
+ * This will:
+ * 1. Delete all files from the existing vector store
+ * 2. Delete all files from OpenAI storage
+ * 3. Delete the vector store itself
+ * 4. Create a new vector store with a new ID
+ * 5. Re-upload all files matching the patterns using parallel upload
+ *
+ * Returns the new vector store ID.
+ */
+std::string rebuild_vector_store(
+    const std::string& old_vector_store_id,
+    const std::vector<std::string>& file_patterns,
+    OpenAIClient& client,
+    Console& console,
+    std::map<std::string, FileMetadata>& indexed_files
+);
+
 } // namespace rag

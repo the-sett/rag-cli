@@ -366,4 +366,76 @@ void update_vector_store(
     console.print_success("Vector store updated.");
 }
 
+std::string rebuild_vector_store(
+    const std::string& old_vector_store_id,
+    const std::vector<std::string>& file_patterns,
+    OpenAIClient& client,
+    Console& console,
+    std::map<std::string, FileMetadata>& indexed_files
+) {
+    console.println();
+    console.print_header("=== Rebuilding Vector Store ===");
+    console.println();
+
+    // Step 1: Delete all files from the vector store and OpenAI storage (in parallel)
+    if (!indexed_files.empty()) {
+        console.print_warning("Deleting " + std::to_string(indexed_files.size()) + " files (8 parallel connections)...");
+
+        // Collect all file IDs
+        std::vector<std::string> file_ids;
+        file_ids.reserve(indexed_files.size());
+        for (const auto& [filepath, metadata] : indexed_files) {
+            file_ids.push_back(metadata.openai_file_id);
+        }
+
+        // Delete files in parallel
+        auto results = client.delete_files_parallel(
+            old_vector_store_id,
+            file_ids,
+            [&console](size_t completed, size_t total) {
+                console.start_status("Deleting (" + std::to_string(completed) + "/" +
+                                    std::to_string(total) + ")...");
+            },
+            8  // max parallel connections
+        );
+
+        console.clear_status();
+
+        // Count successes and report errors
+        size_t deleted = 0;
+        for (const auto& result : results) {
+            if (result.success()) {
+                deleted++;
+            } else {
+                console.print_error("Failed to delete " + result.file_id + ": " + result.error);
+            }
+        }
+
+        console.print_success("Deleted " + std::to_string(deleted) + " files from storage.");
+    }
+
+    // Step 2: Delete the vector store itself
+    console.print_warning("Deleting vector store: " + old_vector_store_id);
+    try {
+        client.delete_vector_store(old_vector_store_id);
+        console.print_success("Vector store deleted.");
+    } catch (const std::exception& e) {
+        std::string err(e.what());
+        // Ignore "not found" errors - store may already be deleted
+        if (err.find("No such") == std::string::npos &&
+            err.find("not found") == std::string::npos) {
+            console.print_error("Failed to delete vector store: " + std::string(e.what()));
+            // Continue anyway - we'll create a new one
+        } else {
+            console.print_warning("Vector store already deleted or not found.");
+        }
+    }
+    console.println();
+
+    // Step 3 & 4: Clear indexed files and create a new vector store with fresh uploads
+    // This reuses the existing create_vector_store function which handles parallel uploads
+    indexed_files.clear();
+    return create_vector_store(file_patterns, client, console, indexed_files);
+}
+
 } // namespace rag

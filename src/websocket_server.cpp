@@ -297,12 +297,16 @@ void WebSocketServer::process_query(void* conn_id, ix::WebSocket& ws, std::share
         return false;
     };
 
+    // Use current settings for model/reasoning_effort (may have been changed via UI)
+    std::string current_model = settings_ ? settings_->model : model_;
+    std::string current_reasoning_effort = settings_ ? settings_->reasoning_effort : reasoning_effort_;
+
     try {
         StreamResult result = client_.stream_response_with_tools(
-            model_,
+            current_model,
             session->get_api_window(),
             vector_store_id_,
-            reasoning_effort_,
+            current_reasoning_effort,
             session->get_openai_response_id(),
             mcp_tools,
             // on_text callback
@@ -346,7 +350,7 @@ void WebSocketServer::process_query(void* conn_id, ix::WebSocket& ws, std::share
         }
 
         // Check if we need to compact the conversation window
-        maybe_compact_chat_window(client_, *session, model_, result.usage);
+        maybe_compact_chat_window(client_, *session, current_model, result.usage);
 
         // Update settings with chat info (only if materialized)
         if (session->is_materialized()) {
