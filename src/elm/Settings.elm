@@ -1,24 +1,39 @@
 module Settings exposing
-    ( SubmitShortcut(..)
+    ( SettingsTab(..)
+    , SubmitShortcut(..)
+    , ReasoningEffort(..)
     , AppSettings
     , defaultSettings
     , submitShortcutToString
     , submitShortcutFromString
     , submitShortcutLabel
     , allSubmitShortcuts
+    , reasoningEffortToString
+    , reasoningEffortFromString
+    , reasoningEffortLabel
+    , allReasoningEfforts
     , fetchSettings
     , saveSettings
     , settingsDecoder
+    , fetchModels
     )
 
 {-| Application settings module.
 
-Handles settings like submit shortcut mode for the query input.
+Handles settings like submit shortcut mode for the query input,
+AI model selection, and reasoning effort level.
 -}
 
 import Http
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
+
+
+{-| Settings tab for the settings modal navigation.
+-}
+type SettingsTab
+    = EditingPreferencesTab
+    | AIModelTab
 
 
 {-| Submit shortcut mode for the query input.
@@ -29,10 +44,20 @@ type SubmitShortcut
     | EnterTwice -- Double Enter (quick succession) submits
 
 
+{-| Reasoning effort level for the AI model.
+-}
+type ReasoningEffort
+    = Low
+    | Medium
+    | High
+
+
 {-| Application settings.
 -}
 type alias AppSettings =
     { submitShortcut : SubmitShortcut
+    , model : String
+    , reasoningEffort : ReasoningEffort
     }
 
 
@@ -41,6 +66,8 @@ type alias AppSettings =
 defaultSettings : AppSettings
 defaultSettings =
     { submitShortcut = ShiftEnter
+    , model = ""
+    , reasoningEffort = Medium
     }
 
 
@@ -51,6 +78,16 @@ allSubmitShortcuts =
     [ EnterOnce
     , ShiftEnter
     , EnterTwice
+    ]
+
+
+{-| All reasoning effort options.
+-}
+allReasoningEfforts : List ReasoningEffort
+allReasoningEfforts =
+    [ Low
+    , Medium
+    , High
     ]
 
 
@@ -99,12 +136,59 @@ submitShortcutLabel shortcut =
             "Press Enter Twice Quickly"
 
 
+{-| Convert a reasoning effort to its JSON string representation.
+-}
+reasoningEffortToString : ReasoningEffort -> String
+reasoningEffortToString effort =
+    case effort of
+        Low ->
+            "low"
+
+        Medium ->
+            "medium"
+
+        High ->
+            "high"
+
+
+{-| Convert a JSON string to a reasoning effort.
+-}
+reasoningEffortFromString : String -> ReasoningEffort
+reasoningEffortFromString str =
+    case str of
+        "low" ->
+            Low
+
+        "high" ->
+            High
+
+        _ ->
+            Medium
+
+
+{-| Human-readable label for a reasoning effort.
+-}
+reasoningEffortLabel : ReasoningEffort -> String
+reasoningEffortLabel effort =
+    case effort of
+        Low ->
+            "Low"
+
+        Medium ->
+            "Medium"
+
+        High ->
+            "High"
+
+
 {-| Decoder for settings from the server.
 -}
 settingsDecoder : Decoder AppSettings
 settingsDecoder =
-    Decode.map AppSettings
+    Decode.map3 AppSettings
         (Decode.field "submit_shortcut" submitShortcutDecoder)
+        (Decode.field "model" Decode.string)
+        (Decode.field "reasoning_effort" reasoningEffortDecoder)
 
 
 {-| Decoder for submit shortcut.
@@ -115,12 +199,22 @@ submitShortcutDecoder =
         |> Decode.map submitShortcutFromString
 
 
+{-| Decoder for reasoning effort.
+-}
+reasoningEffortDecoder : Decoder ReasoningEffort
+reasoningEffortDecoder =
+    Decode.string
+        |> Decode.map reasoningEffortFromString
+
+
 {-| Encode settings for sending to the server.
 -}
 encodeSettings : AppSettings -> Encode.Value
 encodeSettings settings =
     Encode.object
         [ ( "submit_shortcut", Encode.string (submitShortcutToString settings.submitShortcut) )
+        , ( "model", Encode.string settings.model )
+        , ( "reasoning_effort", Encode.string (reasoningEffortToString settings.reasoningEffort) )
         ]
 
 
@@ -147,3 +241,20 @@ saveSettings toMsg settings =
         , timeout = Nothing
         , tracker = Nothing
         }
+
+
+{-| Fetch available models from the server.
+-}
+fetchModels : (Result Http.Error (List String) -> msg) -> Cmd msg
+fetchModels toMsg =
+    Http.get
+        { url = "/api/models"
+        , expect = Http.expectJson toMsg modelsDecoder
+        }
+
+
+{-| Decoder for models list.
+-}
+modelsDecoder : Decoder (List String)
+modelsDecoder =
+    Decode.field "models" (Decode.list Decode.string)

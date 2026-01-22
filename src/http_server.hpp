@@ -15,6 +15,7 @@
 namespace rag {
 
 class EmbeddedResources;
+class OpenAIClient;
 struct Settings;
 
 /**
@@ -32,6 +33,9 @@ public:
 
     // Sets the settings reference for API endpoints.
     void set_settings(Settings* settings) { settings_ = settings; }
+
+    // Sets the OpenAI client reference for model listing.
+    void set_client(OpenAIClient* client) { client_ = client; }
 
     // Starts the server on the given address and port.
     // This call blocks until the server is stopped.
@@ -54,6 +58,7 @@ private:
     std::function<void(const std::string&, int)> on_start_callback_;
     bool running_ = false;
     Settings* settings_ = nullptr;
+    OpenAIClient* client_ = nullptr;
 };
 
 } // namespace rag

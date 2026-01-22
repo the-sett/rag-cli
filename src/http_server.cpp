@@ -1,5 +1,6 @@
 #include "http_server.hpp"
 #include "embedded_resources.hpp"
+#include "openai_client.hpp"
 #include "settings.hpp"
 #include "verbose.hpp"
 #include <httplib.h>
@@ -208,7 +209,9 @@ bool HttpServer::start(const std::string& address, int port) {
         }
 
         json settings_json = {
-            {"submit_shortcut", submit_shortcut_to_string(settings_->submit_shortcut)}
+            {"submit_shortcut", submit_shortcut_to_string(settings_->submit_shortcut)},
+            {"model", settings_->model},
+            {"reasoning_effort", settings_->reasoning_effort}
         };
 
         verbose_out("HTTP", "Response: " + settings_json.dump());
@@ -234,10 +237,22 @@ bool HttpServer::start(const std::string& address, int port) {
                 settings_->submit_shortcut = submit_shortcut_from_string(body["submit_shortcut"].get<std::string>());
             }
 
+            // Update model if provided
+            if (body.contains("model") && body["model"].is_string()) {
+                settings_->model = body["model"].get<std::string>();
+            }
+
+            // Update reasoning effort if provided
+            if (body.contains("reasoning_effort") && body["reasoning_effort"].is_string()) {
+                settings_->reasoning_effort = body["reasoning_effort"].get<std::string>();
+            }
+
             save_settings(*settings_);
 
             json response = {
-                {"submit_shortcut", submit_shortcut_to_string(settings_->submit_shortcut)}
+                {"submit_shortcut", submit_shortcut_to_string(settings_->submit_shortcut)},
+                {"model", settings_->model},
+                {"reasoning_effort", settings_->reasoning_effort}
             };
 
             verbose_out("HTTP", "Updated settings: " + response.dump());
@@ -246,6 +261,34 @@ bool HttpServer::start(const std::string& address, int port) {
         } catch (const json::exception& e) {
             res.status = 400;
             res.set_content(R"({"error": "Invalid JSON"})", "application/json");
+        }
+    });
+
+    // REST API: Get available models
+    svr.Get("/api/models", [this](const httplib::Request& req, httplib::Response& res) {
+        verbose_in("HTTP", "GET /api/models");
+        res.set_header("Content-Type", "application/json");
+
+        if (!client_) {
+            res.status = 500;
+            res.set_content(R"({"error": "OpenAI client not available"})", "application/json");
+            return;
+        }
+
+        try {
+            std::vector<std::string> models = client_->list_models();
+
+            json response = {
+                {"models", models}
+            };
+
+            verbose_out("HTTP", "Response: " + std::to_string(models.size()) + " models");
+            res.set_content(response.dump(), "application/json");
+
+        } catch (const std::exception& e) {
+            res.status = 500;
+            json error = {{"error", e.what()}};
+            res.set_content(error.dump(), "application/json");
         }
     });
 

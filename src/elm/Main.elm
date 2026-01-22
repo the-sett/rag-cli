@@ -16,7 +16,7 @@ import Pages.Chat.Component as Chat
 import Pages.Intro.Component as Intro
 import Ports
 import Procedure.Program
-import Settings exposing (AppSettings, SubmitShortcut)
+import Settings exposing (AppSettings, ReasoningEffort, SettingsTab(..), SubmitShortcut)
 import Update2 as U2
 import Websocket
 
@@ -62,6 +62,13 @@ type ConnectionStatus
     | Connected Websocket.SocketId
 
 
+type AvailableModels
+    = ModelsNotLoaded
+    | ModelsLoading
+    | ModelsLoaded (List String)
+    | ModelsError String
+
+
 type alias Model =
     { procedureState : Procedure.Program.Model Msg
     , cragUrl : String
@@ -76,6 +83,8 @@ type alias Model =
     , appSettings : AppSettings       -- Application settings (submit shortcut, etc.)
     , showSettingsModal : Bool        -- Whether the settings modal is visible
     , pendingSettings : AppSettings   -- Settings being edited in the modal (before save)
+    , activeSettingsTab : SettingsTab -- Which tab is active in the settings modal
+    , availableModels : AvailableModels -- List of available AI models
     }
 
 
@@ -97,7 +106,11 @@ type Msg
     | GotSettings (Result Http.Error AppSettings)
     | OpenSettingsModal
     | CloseSettingsModal
+    | SetSettingsTab SettingsTab
     | SetPendingShortcut SubmitShortcut
+    | SetPendingModel String
+    | SetPendingReasoningEffort ReasoningEffort
+    | GotModels (Result Http.Error (List String))
     | SaveSettings
     | SettingsSaved (Result Http.Error AppSettings)
     | NoOp
@@ -160,6 +173,8 @@ init flagsValue =
             , appSettings = Settings.defaultSettings
             , showSettingsModal = False
             , pendingSettings = Settings.defaultSettings
+            , activeSettingsTab = EditingPreferencesTab
+            , availableModels = ModelsNotLoaded
             }
     in
     ( model
@@ -360,14 +375,44 @@ update msg model =
                     U2.pure model
 
         OpenSettingsModal ->
-            U2.pure
-                { model
-                    | showSettingsModal = True
-                    , pendingSettings = model.appSettings
-                }
+            let
+                -- Fetch models if not already loaded
+                fetchCmd =
+                    case model.availableModels of
+                        ModelsNotLoaded ->
+                            Settings.fetchModels GotModels
+
+                        ModelsError _ ->
+                            Settings.fetchModels GotModels
+
+                        _ ->
+                            Cmd.none
+
+                newAvailableModels =
+                    case model.availableModels of
+                        ModelsNotLoaded ->
+                            ModelsLoading
+
+                        ModelsError _ ->
+                            ModelsLoading
+
+                        other ->
+                            other
+            in
+            ( { model
+                | showSettingsModal = True
+                , pendingSettings = model.appSettings
+                , activeSettingsTab = EditingPreferencesTab
+                , availableModels = newAvailableModels
+              }
+            , fetchCmd
+            )
 
         CloseSettingsModal ->
             U2.pure { model | showSettingsModal = False }
+
+        SetSettingsTab tab ->
+            U2.pure { model | activeSettingsTab = tab }
 
         SetPendingShortcut shortcut ->
             let
@@ -375,6 +420,28 @@ update msg model =
                     model.pendingSettings
             in
             U2.pure { model | pendingSettings = { pending | submitShortcut = shortcut } }
+
+        SetPendingModel modelName ->
+            let
+                pending =
+                    model.pendingSettings
+            in
+            U2.pure { model | pendingSettings = { pending | model = modelName } }
+
+        SetPendingReasoningEffort effort ->
+            let
+                pending =
+                    model.pendingSettings
+            in
+            U2.pure { model | pendingSettings = { pending | reasoningEffort = effort } }
+
+        GotModels result ->
+            case result of
+                Ok models ->
+                    U2.pure { model | availableModels = ModelsLoaded models }
+
+                Err _ ->
+                    U2.pure { model | availableModels = ModelsError "Failed to load models" }
 
         SaveSettings ->
             ( model, Settings.saveSettings SettingsSaved model.pendingSettings )
@@ -719,20 +786,16 @@ viewSettingsModal model =
             , HE.onClick CloseSettingsModal
             ]
             [ HS.div
-                [ HA.class "modal-content"
+                [ HA.class "modal-content settings-modal-content"
                 , HE.stopPropagationOn "click" (Decode.succeed ( NoOp, True ))
                 ]
                 [ HS.h3
                     [ HA.class "modal-title" ]
                     [ HS.text "Settings" ]
                 , HS.div
-                    [ HA.class "settings-form" ]
-                    [ HS.label
-                        [ HA.class "settings-label" ]
-                        [ HS.text "Query Submit Shortcut" ]
-                    , HS.div
-                        [ HA.class "settings-radio-group" ]
-                        (List.map (viewShortcutOption model.pendingSettings.submitShortcut) Settings.allSubmitShortcuts)
+                    [ HA.class "settings-modal-layout" ]
+                    [ viewSettingsNav model.activeSettingsTab
+                    , viewSettingsContent model
                     ]
                 , HS.div
                     [ HA.class "modal-buttons" ]
@@ -752,6 +815,161 @@ viewSettingsModal model =
 
     else
         HS.text ""
+
+
+viewSettingsNav : SettingsTab -> Html Msg
+viewSettingsNav activeTab =
+    HS.nav
+        [ HA.class "settings-nav" ]
+        [ viewNavItem EditingPreferencesTab "Editing" activeTab
+        , viewNavItem AIModelTab "AI Model" activeTab
+        ]
+
+
+viewNavItem : SettingsTab -> String -> SettingsTab -> Html Msg
+viewNavItem tab label activeTab =
+    let
+        isActive =
+            tab == activeTab
+
+        itemClass =
+            if isActive then
+                "settings-nav-item settings-nav-item-active"
+
+            else
+                "settings-nav-item"
+    in
+    HS.button
+        [ HA.class itemClass
+        , HE.onClick (SetSettingsTab tab)
+        ]
+        [ HS.text label ]
+
+
+viewSettingsContent : Model -> Html Msg
+viewSettingsContent model =
+    HS.div
+        [ HA.class "settings-content" ]
+        [ case model.activeSettingsTab of
+            EditingPreferencesTab ->
+                viewEditingPreferences model.pendingSettings
+
+            AIModelTab ->
+                viewAIModelSettings model
+        ]
+
+
+viewEditingPreferences : AppSettings -> Html Msg
+viewEditingPreferences settings =
+    HS.div
+        [ HA.class "settings-section" ]
+        [ HS.h4
+            [ HA.class "settings-section-title" ]
+            [ HS.text "Editing Preferences" ]
+        , HS.div
+            [ HA.class "settings-form" ]
+            [ HS.label
+                [ HA.class "settings-label" ]
+                [ HS.text "Query Submit Shortcut" ]
+            , HS.div
+                [ HA.class "settings-radio-group" ]
+                (List.map (viewShortcutOption settings.submitShortcut) Settings.allSubmitShortcuts)
+            ]
+        ]
+
+
+viewAIModelSettings : Model -> Html Msg
+viewAIModelSettings model =
+    HS.div
+        [ HA.class "settings-section" ]
+        [ HS.h4
+            [ HA.class "settings-section-title" ]
+            [ HS.text "AI Model" ]
+        , viewModelDropdown model
+        , viewReasoningEffortRadios model.pendingSettings.reasoningEffort
+        ]
+
+
+viewModelDropdown : Model -> Html Msg
+viewModelDropdown model =
+    HS.div
+        [ HA.class "settings-form" ]
+        [ HS.label
+            [ HA.class "settings-label" ]
+            [ HS.text "Model" ]
+        , case model.availableModels of
+            ModelsNotLoaded ->
+                HS.span [ HA.class "settings-loading" ] [ HS.text "Loading models..." ]
+
+            ModelsLoading ->
+                HS.span [ HA.class "settings-loading" ] [ HS.text "Loading models..." ]
+
+            ModelsError err ->
+                HS.span [ HA.class "settings-error" ] [ HS.text err ]
+
+            ModelsLoaded models ->
+                HS.select
+                    [ HA.class "settings-select"
+                    , HE.onInput SetPendingModel
+                    , HA.value model.pendingSettings.model
+                    ]
+                    (List.map (viewModelOption model.pendingSettings.model) models)
+        ]
+
+
+viewModelOption : String -> String -> Html Msg
+viewModelOption selectedModel modelId =
+    HS.option
+        [ HA.value modelId
+        , HA.selected (modelId == selectedModel)
+        ]
+        [ HS.text modelId ]
+
+
+viewReasoningEffortRadios : ReasoningEffort -> Html Msg
+viewReasoningEffortRadios selectedEffort =
+    HS.div
+        [ HA.class "settings-form" ]
+        [ HS.label
+            [ HA.class "settings-label" ]
+            [ HS.text "Thinking Level" ]
+        , HS.p
+            [ HA.class "settings-help-text" ]
+            [ HS.text "Higher levels use more tokens for deeper reasoning." ]
+        , HS.div
+            [ HA.class "settings-radio-group" ]
+            (List.map (viewReasoningEffortOption selectedEffort) Settings.allReasoningEfforts)
+        ]
+
+
+viewReasoningEffortOption : ReasoningEffort -> ReasoningEffort -> Html Msg
+viewReasoningEffortOption selectedEffort effort =
+    let
+        isSelected =
+            selectedEffort == effort
+
+        optionClass =
+            if isSelected then
+                "settings-radio-option settings-radio-option-selected"
+
+            else
+                "settings-radio-option"
+    in
+    HS.label
+        [ HA.class optionClass
+        , HE.onClick (SetPendingReasoningEffort effort)
+        ]
+        [ HS.input
+            [ HA.type_ "radio"
+            , HA.class "settings-radio-input"
+            , HA.name "reasoning-effort"
+            , HA.checked isSelected
+            ]
+            []
+        , HS.span
+            [ HA.class "settings-radio-text" ]
+            [ HS.text (Settings.reasoningEffortLabel effort) ]
+        ]
 
 
 viewShortcutOption : SubmitShortcut -> SubmitShortcut -> Html Msg

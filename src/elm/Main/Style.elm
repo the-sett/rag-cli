@@ -674,6 +674,90 @@ introStyles =
         [ Css.fontSize (Css.rem 1)
         , Css.color colorText
         ]
+
+    -- Settings modal with tabs - wider layout
+    , Css.Global.class "settings-modal-content"
+        [ Css.maxWidth (Css.px 600)
+        , Css.minHeight (Css.px 400)
+        ]
+    , Css.Global.class "settings-modal-layout"
+        [ Css.displayFlex
+        , Css.flex (Css.int 1)
+        , Css.minHeight (Css.px 300)
+        ]
+
+    -- Settings navigation (left sidebar)
+    , Css.Global.class "settings-nav"
+        [ Css.width (Css.px 140)
+        , Css.flexShrink Css.zero
+        , Css.borderRight3 (Css.px 1) Css.solid colorBorder
+        , Css.paddingRight space2
+        , Css.marginRight space2
+        , Css.displayFlex
+        , Css.flexDirection Css.column
+        , Css.property "gap" "0.25rem"
+        ]
+    , Css.Global.class "settings-nav-item"
+        [ Css.display Css.block
+        , Css.width (Css.pct 100)
+        , Css.padding2 space1 space1
+        , Css.border Css.zero
+        , Css.backgroundColor Css.transparent
+        , Css.color colorText
+        , Css.fontSize (Css.rem 0.9375)
+        , Css.textAlign Css.left
+        , Css.cursor Css.pointer
+        , Css.borderRadius (Css.px 4)
+        , Css.fontFamilies fontStack
+        , Css.property "transition" "background-color 0.2s"
+        , Css.hover
+            [ Css.backgroundColor colorBackgroundTertiary
+            ]
+        ]
+    , Css.Global.class "settings-nav-item-active"
+        [ Css.backgroundColor colorFocus
+        , Css.fontWeight (Css.int 600)
+        ]
+
+    -- Settings content area (right side)
+    , Css.Global.class "settings-content"
+        [ Css.flex (Css.int 1)
+        , Css.overflowY Css.auto
+        ]
+    , Css.Global.class "settings-section"
+        [ Css.marginBottom space3
+        ]
+    , Css.Global.class "settings-section-title"
+        [ Css.fontSize (Css.rem 1.125)
+        , Css.fontWeight (Css.int 600)
+        , Css.color colorText
+        , Css.margin4 Css.zero Css.zero space2 Css.zero
+        ]
+    , Css.Global.class "settings-help-text"
+        [ Css.fontSize (Css.rem 0.875)
+        , Css.color colorTextSecondary
+        , Css.margin4 Css.zero Css.zero space1 Css.zero
+        ]
+
+    -- Settings select/dropdown
+    , Css.Global.class "settings-select"
+        [ Css.width (Css.pct 100)
+        , Css.padding2 space1 space1
+        , Css.fontSize (Css.rem 1)
+        , Css.fontFamilies fontStack
+        , Css.color colorText
+        , Css.backgroundColor colorBackground
+        , Css.border3 (Css.px 1) Css.solid colorBorder
+        , Css.borderRadius (Css.px 4)
+        , Css.cursor Css.pointer
+        ]
+    , Css.Global.class "settings-loading"
+        [ Css.color colorTextSecondary
+        , Css.fontStyle Css.italic
+        ]
+    , Css.Global.class "settings-error"
+        [ Css.color colorNegative
+        ]
     ]
 
 

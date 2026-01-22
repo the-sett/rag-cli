@@ -366,8 +366,9 @@ int main(int argc, char* argv[]) {
             console.println("Serving web UI from directory: " + www_dir);
         }
 
-        // Pass settings to HTTP server for API endpoints
+        // Pass settings and client to HTTP server for API endpoints
         http_server->set_settings(&settings);
+        http_server->set_client(&client);
 
         // Create WebSocket server for chat.
         WebSocketServer ws_server(
