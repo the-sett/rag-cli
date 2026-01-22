@@ -22,7 +22,7 @@ std::string submit_shortcut_to_string(SubmitShortcut mode) {
 SubmitShortcut submit_shortcut_from_string(const std::string& str) {
     if (str == "shift_enter") return SubmitShortcut::ShiftEnter;
     if (str == "enter_twice") return SubmitShortcut::EnterTwice;
-    return SubmitShortcut::EnterOnce;  // Default
+    return SubmitShortcut::ShiftEnter;  // Default
 }
 
 std::optional<Settings> load_settings() {

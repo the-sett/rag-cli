@@ -40,7 +40,7 @@ type alias AppSettings =
 -}
 defaultSettings : AppSettings
 defaultSettings =
-    { submitShortcut = EnterOnce
+    { submitShortcut = ShiftEnter
     }
 
 
