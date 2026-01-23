@@ -1,13 +1,14 @@
 #pragma once
 
 /**
- * Google Gemini provider implementation (stub).
+ * Google Gemini provider implementation.
  *
- * This is a placeholder implementation for the Gemini API.
- * Most methods are not yet implemented.
+ * Implements the AI provider interfaces for Google's Gemini API, including
+ * Models, File Search Stores (RAG), and streaming chat.
  */
 
 #include "../provider.hpp"
+#include <curl/curl.h>
 
 namespace rag::providers::gemini {
 
@@ -64,7 +65,7 @@ public:
         ProgressCallback on_progress = nullptr,
         size_t max_parallel = 8
     ) override;
-    bool requires_file_upload() const override { return false; }
+    bool requires_file_upload() const override { return true; }
 
     // ========== IKnowledgeStore ==========
     std::string create_store(const std::string& name) override;
@@ -73,7 +74,7 @@ public:
     void add_file(const std::string& store_id, const std::string& file_id) override;
     void remove_file(const std::string& store_id, const std::string& file_id) override;
     std::string get_operation_status(const std::string& store_id, const std::string& operation_id) override;
-    bool supports_dedicated_stores() const override { return false; }
+    bool supports_dedicated_stores() const override { return true; }
 
     // ========== IChatService ==========
     StreamResult stream_response(
@@ -116,6 +117,31 @@ public:
 private:
     std::string api_key_;
     std::string api_base_;
+
+    // ========== HTTP Helpers ==========
+    std::string http_get(const std::string& url);
+    std::string http_post_json(const std::string& url, const nlohmann::json& body);
+    std::string http_post_multipart(const std::string& url,
+                                    const std::string& filepath,
+                                    const nlohmann::json& metadata = nlohmann::json());
+    bool http_post_stream(const std::string& url,
+                          const nlohmann::json& body,
+                          std::function<void(const std::string&)> on_data,
+                          CancelCallback cancel_check = nullptr);
+    std::string http_delete(const std::string& url);
+
+    // ========== Helpers ==========
+    // Convert our Message format to Gemini's contents format
+    nlohmann::json messages_to_contents(const std::vector<Message>& messages);
+
+    // Extract model short name from full path (e.g., "models/gemini-3-flash" -> "gemini-3-flash")
+    std::string extract_model_name(const std::string& full_name);
+
+    // Wait for an async operation to complete
+    void wait_for_operation(const std::string& operation_name);
+
+    // Build the full URL with API key
+    std::string build_url(const std::string& path);
 };
 
 } // namespace rag::providers::gemini
