@@ -3,118 +3,60 @@
 /**
  * OpenAI API client for the crag CLI.
  *
- * Provides methods for interacting with OpenAI's Models, Files, Vector Stores,
- * and Responses APIs using libcurl for HTTP transport.
+ * This is a backward-compatibility wrapper that delegates to the provider
+ * abstraction layer. New code should use the providers directly.
+ *
+ * @deprecated Use rag::providers::openai::OpenAIProvider directly.
  */
 
 #include <string>
 #include <vector>
 #include <functional>
+#include <memory>
 #include <nlohmann/json.hpp>
+#include "providers/types.hpp"
 
 namespace rag {
 
-/**
- * Result of a single file upload in a parallel batch.
- */
-struct UploadResult {
-    std::string filepath;      // Original file path
-    std::string file_id;       // OpenAI file ID (empty on error)
-    std::string error;         // Error message (empty on success)
-    bool success() const { return !file_id.empty(); }
-};
-
-/**
- * Result of a single file deletion in a parallel batch.
- */
-struct DeleteResult {
-    std::string file_id;       // OpenAI file ID that was deleted
-    std::string error;         // Error message (empty on success)
-    bool success() const { return error.empty(); }
-};
-
-/**
- * A chat message with role and content.
- */
-struct Message {
-    std::string role;    // Message role: "system", "user", or "assistant".
-    std::string content; // The text content of the message.
-
-    // Converts this message to JSON format for the API.
-    nlohmann::json to_json() const {
-        return {{"role", role}, {"content", content}};
-    }
-};
-
-/**
- * Token usage information for a single Responses API call.
- */
-struct ResponseUsage {
-    int input_tokens = 0;       // Tokens in the prompt window.
-    int output_tokens = 0;      // Tokens generated in the answer.
-    int reasoning_tokens = 0;   // For reasoning models; 0 otherwise.
-};
-
-/**
- * Result of a streaming Responses call.
- * Includes the response ID for continuation and token usage.
- */
-struct StreamResult {
-    std::string response_id;    // Response ID returned by the API.
-    ResponseUsage usage;        // Token usage reported by the API.
-};
-
-/**
- * Callback types for streaming responses.
- */
-using OnTextCallback = std::function<void(const std::string&)>;
+// Re-export types from providers namespace for backward compatibility
+using UploadResult = providers::UploadResult;
+using DeleteResult = providers::DeleteResult;
+using Message = providers::Message;
+using ResponseUsage = providers::ResponseUsage;
+using StreamResult = providers::StreamResult;
+using OnTextCallback = providers::OnTextCallback;
 using OnToolCallCallback = std::function<void(const std::string& call_id, const std::string& name, const nlohmann::json& arguments)>;
+using CancelCallback = providers::CancelCallback;
 
-/**
- * Callback to check if cancellation has been requested.
- * Returns true if the stream should be cancelled.
- */
-using CancelCallback = std::function<bool()>;
+// Forward declaration
+namespace providers::openai {
+class OpenAIProvider;
+}
 
 /**
  * HTTP client for OpenAI API interactions.
  *
- * Handles authentication, request formatting, and response parsing for all
- * OpenAI API endpoints used by the application.
+ * @deprecated Use rag::providers::openai::OpenAIProvider directly.
  */
 class OpenAIClient {
 public:
-    // Creates a client with the given API key.
     explicit OpenAIClient(const std::string& api_key);
-
-    // Cleans up CURL global state.
     ~OpenAIClient();
 
-    // ========== Models API ==========
+    // Prevent copying
+    OpenAIClient(const OpenAIClient&) = delete;
+    OpenAIClient& operator=(const OpenAIClient&) = delete;
 
-    // Lists available models, filtered to gpt-5* models only.
+    // ========== Models API ==========
     std::vector<std::string> list_models();
 
     // ========== Files API ==========
-
-    // Uploads a file for use with assistants. Returns the file ID.
     std::string upload_file(const std::string& filepath);
-
-    // Uploads multiple files in parallel using curl_multi.
-    // Uses up to max_parallel concurrent connections (default 8).
-    // Returns results for all files, including any errors.
     std::vector<UploadResult> upload_files_parallel(
         const std::vector<std::string>& filepaths,
         std::function<void(size_t completed, size_t total)> on_progress = nullptr,
         size_t max_parallel = 8);
-
-    // Deletes a file from OpenAI storage.
     void delete_file(const std::string& file_id);
-
-    // Deletes multiple files in parallel using curl_multi.
-    // For each file, removes it from the vector store first, then deletes from storage.
-    // Uses up to max_parallel concurrent connections (default 8).
-    // Returns results for all files, including any errors.
     std::vector<DeleteResult> delete_files_parallel(
         const std::string& vector_store_id,
         const std::vector<std::string>& file_ids,
@@ -122,36 +64,18 @@ public:
         size_t max_parallel = 8);
 
     // ========== Vector Stores API ==========
-
-    // Creates a new vector store with the given name. Returns the store ID.
     std::string create_vector_store(const std::string& name);
-
-    // Creates a batch of files in a vector store. Returns the batch ID.
     std::string create_file_batch(const std::string& vector_store_id,
                                    const std::vector<std::string>& file_ids);
-
-    // Gets the status of a file batch operation.
     std::string get_batch_status(const std::string& vector_store_id,
                                   const std::string& batch_id);
-
-    // Adds a single file to an existing vector store.
     void add_file_to_vector_store(const std::string& vector_store_id,
                                    const std::string& file_id);
-
-    // Removes a file from a vector store (does not delete the file itself).
     void remove_file_from_vector_store(const std::string& vector_store_id,
                                         const std::string& file_id);
-
-    // Deletes a vector store entirely.
     void delete_vector_store(const std::string& vector_store_id);
 
     // ========== Responses API ==========
-
-    // Streams a response from the model with file_search tool enabled.
-    // The on_text callback is invoked for each text delta received.
-    // If previous_response_id is provided, continues an existing conversation.
-    // The cancel_check callback is polled to allow cancellation (optional).
-    // Returns StreamResult with response ID and token usage.
     StreamResult stream_response(
         const std::string& model,
         const std::vector<Message>& conversation,
@@ -162,9 +86,6 @@ public:
         CancelCallback cancel_check = nullptr
     );
 
-    // Overload that accepts JSON input directly (for compacted conversations).
-    // When previous_response_id is provided, only the last user message is sent.
-    // Otherwise, the full input array is sent (which may contain compaction items).
     StreamResult stream_response(
         const std::string& model,
         const nlohmann::json& input,
@@ -175,16 +96,8 @@ public:
         CancelCallback cancel_check = nullptr
     );
 
-    // Callback for tool calls that returns the tool output string
     using OnToolCallWithResultCallback = std::function<std::string(const std::string& call_id, const std::string& name, const nlohmann::json& arguments)>;
 
-    // Streams a response with MCP tools enabled.
-    // The on_text callback is invoked for each text delta received.
-    // The on_tool_call callback is invoked when a tool call is requested.
-    //   It should return a string result that will be sent back to OpenAI.
-    // The additional_tools parameter contains function tool definitions.
-    // The cancel_check callback is polled to allow cancellation (optional).
-    // Returns StreamResult with response ID and token usage.
     StreamResult stream_response_with_tools(
         const std::string& model,
         const std::vector<Message>& conversation,
@@ -197,7 +110,6 @@ public:
         CancelCallback cancel_check = nullptr
     );
 
-    // Overload that accepts JSON input directly (for compacted conversations).
     StreamResult stream_response_with_tools(
         const std::string& model,
         const nlohmann::json& input,
@@ -210,38 +122,10 @@ public:
         CancelCallback cancel_check = nullptr
     );
 
-    // Compacts a long-running conversation window.
-    // Calls the /responses/compact endpoint with the previous response ID and
-    // returns the compacted window to use as input for the next /responses call.
     nlohmann::json compact_window(const std::string& model, const std::string& previous_response_id);
 
 private:
-    std::string api_key_;  // OpenAI API key.
-
-    // ========== HTTP Helpers ==========
-
-    // Performs an HTTP GET request.
-    std::string http_get(const std::string& url);
-
-    // Performs an HTTP POST with JSON body.
-    std::string http_post_json(const std::string& url, const nlohmann::json& body);
-
-    // Performs an HTTP POST with multipart form data for file upload.
-    // If display_filename is provided, it overrides the filename sent to the API.
-    std::string http_post_multipart(const std::string& url,
-                                     const std::string& filepath,
-                                     const std::string& purpose,
-                                     const std::string& display_filename = "");
-
-    // Performs a streaming HTTP POST for Server-Sent Events.
-    // Returns true if completed normally, false if cancelled.
-    bool http_post_stream(const std::string& url,
-                          const nlohmann::json& body,
-                          std::function<void(const std::string&)> on_data,
-                          CancelCallback cancel_check = nullptr);
-
-    // Performs an HTTP DELETE request.
-    std::string http_delete(const std::string& url);
+    std::unique_ptr<providers::openai::OpenAIProvider> provider_;
 };
 
 } // namespace rag

@@ -121,6 +121,9 @@ set(SOURCES
     src/inotify_watcher.cpp
     src/embedded_resources.cpp
     src/third_party/miniz.c
+    src/providers/factory.cpp
+    src/providers/openai/openai_provider.cpp
+    src/providers/gemini/gemini_provider.cpp
 )
 
 add_executable(crag ${SOURCES})
@@ -173,6 +176,9 @@ if(BUILD_TESTS)
         src/inotify_watcher.cpp
         src/embedded_resources.cpp
         src/third_party/miniz.c
+        src/providers/factory.cpp
+        src/providers/openai/openai_provider.cpp
+        src/providers/gemini/gemini_provider.cpp
     )
 
     add_library(crag_lib STATIC ${LIB_SOURCES})
