@@ -13,9 +13,14 @@
 namespace rag::providers::gemini {
 
 /**
- * Gemini API base URL.
+ * Gemini API base URL for general requests.
  */
 constexpr const char* GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+/**
+ * Gemini API base URL for file uploads (uses different path).
+ */
+constexpr const char* GEMINI_UPLOAD_BASE = "https://generativelanguage.googleapis.com/upload/v1beta";
 
 /**
  * Gemini provider implementation.
@@ -142,6 +147,12 @@ private:
 
     // Build the full URL with API key
     std::string build_url(const std::string& path);
+
+    // Build upload URL (uses GEMINI_UPLOAD_BASE)
+    std::string build_upload_url(const std::string& path);
+
+    // Upload file using Gemini's resumable upload protocol
+    std::string upload_file_resumable(const std::string& filepath);
 };
 
 } // namespace rag::providers::gemini

@@ -9,6 +9,7 @@
  */
 
 #include "settings.hpp"
+#include "providers/provider.hpp"
 #include <string>
 #include <functional>
 #include <thread>
@@ -23,7 +24,6 @@
 
 namespace rag {
 
-class OpenAIClient;
 class Console;
 
 /**
@@ -40,7 +40,7 @@ using ReindexCallback = std::function<void(size_t added, size_t modified, size_t
  *
  * Runs a background thread that periodically checks for file changes
  * using the file patterns stored in settings. When changes are detected,
- * it calls update_vector_store() to sync with OpenAI.
+ * it calls update_vector_store() to sync with the AI provider.
  */
 class FileWatcher {
 public:
@@ -48,12 +48,12 @@ public:
      * Creates a file watcher.
      *
      * @param settings Reference to settings (will be modified when reindexing)
-     * @param client Reference to OpenAI client for API calls
+     * @param provider Reference to AI provider for API calls
      * @param poll_interval_seconds How often to check for changes (default: 5)
      */
     FileWatcher(
         Settings& settings,
-        OpenAIClient& client,
+        providers::IAIProvider& provider,
         int poll_interval_seconds = 5
     );
 
@@ -93,7 +93,7 @@ private:
     void setup_watches();
 
     Settings& settings_;
-    OpenAIClient& client_;
+    providers::IAIProvider& provider_;
     int poll_interval_seconds_;
 
     std::atomic<bool> running_{false};

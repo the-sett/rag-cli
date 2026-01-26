@@ -255,7 +255,6 @@ std::pair<Settings, std::unique_ptr<providers::IAIProvider>> load_or_create_sett
 
         // Create provider based on existing settings
         auto provider = create_provider(settings.provider);
-        OpenAIClient client(get_api_key_for_provider(settings.provider));
 
         // Use new file patterns if provided, otherwise use stored patterns.
         std::vector<std::string> patterns_to_use = files.empty() ? settings.file_patterns : files;
@@ -275,7 +274,7 @@ std::pair<Settings, std::unique_ptr<providers::IAIProvider>> load_or_create_sett
         std::string new_vector_store_id = rebuild_vector_store(
             settings.vector_store_id,
             patterns_to_use,
-            client,
+            *provider,
             console,
             settings.indexed_files
         );
@@ -297,7 +296,6 @@ std::pair<Settings, std::unique_ptr<providers::IAIProvider>> load_or_create_sett
 
         // Create provider based on existing settings
         auto provider = create_provider(settings.provider);
-        OpenAIClient client(get_api_key_for_provider(settings.provider));
 
         // Use new file patterns if provided, otherwise use stored patterns.
         std::vector<std::string> patterns_to_use = files.empty() ? settings.file_patterns : files;
@@ -325,7 +323,7 @@ std::pair<Settings, std::unique_ptr<providers::IAIProvider>> load_or_create_sett
         FileDiff diff = compute_file_diff(current_files, settings.indexed_files);
 
         // Apply incremental updates.
-        update_vector_store(settings.vector_store_id, diff, client, console, settings.indexed_files);
+        update_vector_store(settings.vector_store_id, diff, *provider, console, settings.indexed_files);
 
         // Save updated settings.
         save_settings(settings);
@@ -400,17 +398,13 @@ std::pair<Settings, std::unique_ptr<providers::IAIProvider>> load_or_create_sett
     // Step 3: Select reasoning effort
     std::string reasoning_effort = select_reasoning_effort(console);
 
-    // Step 4: Create vector store and upload files
-    // Note: For now, we still use OpenAIClient for vector store operations
-    // TODO: Migrate vector_store.cpp to use IAIProvider
-    OpenAIClient client(get_api_key_for_provider(selected_provider));
-
+    // Step 4: Create knowledge store and upload files
     Settings settings;
     settings.provider = selected_provider;
     settings.model = selected_model;
     settings.reasoning_effort = reasoning_effort;
     settings.file_patterns = files;
-    settings.vector_store_id = create_vector_store(files, client, console, settings.indexed_files);
+    settings.vector_store_id = create_vector_store(files, *provider, console, settings.indexed_files);
 
     if (settings.vector_store_id.empty()) {
         std::exit(1);
@@ -540,8 +534,11 @@ int main(int argc, char* argv[]) {
 
         std::string system_prompt = build_system_prompt();
 
-        // Create OpenAI client (for backward compatibility).
-        // TODO: Migrate to using IAIProvider directly.
+        // Create provider for file operations
+        auto provider = create_provider(settings.provider);
+
+        // Create OpenAI client (for backward compatibility with chat services).
+        // TODO: Migrate WebSocketServer to use IAIProvider directly.
         OpenAIClient client(api_key);
 
         // Use embedded resources by default, or filesystem if --www-dir specified.
@@ -585,7 +582,7 @@ int main(int argc, char* argv[]) {
         });
 
         // Create file watcher for automatic reindexing
-        FileWatcher file_watcher(settings, client);
+        FileWatcher file_watcher(settings, *provider);
         file_watcher.on_reindex([&console, &ws_server](size_t added, size_t modified, size_t removed) {
             std::string msg = "Reindexed: ";
             if (added > 0) msg += std::to_string(added) + " added";
@@ -657,8 +654,11 @@ int main(int argc, char* argv[]) {
 
         std::string system_prompt = build_system_prompt();
 
-        // Create OpenAI client (for backward compatibility).
-        // TODO: Migrate to using IAIProvider directly.
+        // Create provider for file operations
+        auto provider = create_provider(settings.provider);
+
+        // Create OpenAI client (for backward compatibility with chat services).
+        // TODO: Migrate MCPServer to use IAIProvider directly.
         OpenAIClient client(api_key);
 
         // Create and run MCP server.
@@ -667,7 +667,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "MCP: Vector store: " << settings.vector_store_id << std::endl;
 
         // Create file watcher for automatic reindexing
-        FileWatcher file_watcher(settings, client);
+        FileWatcher file_watcher(settings, *provider);
         file_watcher.on_reindex([](size_t added, size_t modified, size_t removed) {
             std::cerr << "[FileWatcher] Reindexed: "
                       << added << " added, "
@@ -706,9 +706,8 @@ int main(int argc, char* argv[]) {
     Settings settings = std::move(settings_and_provider.first);
     auto provider = std::move(settings_and_provider.second);
 
-    // Create OpenAIClient for backward compatibility with chat operations
-    // TODO: Migrate chat.cpp to use IAIProvider directly
-    OpenAIClient client(get_api_key_for_provider(settings.provider));
+    // Use the provider for chat operations
+    // Note: provider was created by load_or_create_settings() and is the correct type
 
     // Determine reasoning effort.
     std::string reasoning_effort = settings.reasoning_effort;
@@ -802,6 +801,13 @@ int main(int argc, char* argv[]) {
         };
 
         try {
+            // Build chat configuration
+            providers::ChatConfig chat_config;
+            chat_config.model = settings.model;
+            chat_config.reasoning_effort = reasoning_effort;
+            chat_config.knowledge_store_id = settings.vector_store_id;
+            chat_config.previous_response_id = chat.get_openai_response_id();
+
             StreamResult result;
             if (render_markdown) {
                 // Use markdown renderer for interactive mode.
@@ -810,12 +816,9 @@ int main(int argc, char* argv[]) {
                     console.flush();
                 });
 
-                result = client.stream_response(
-                    settings.model,
+                result = provider->chat().stream_response(
+                    chat_config,
                     chat.get_api_window(),
-                    settings.vector_store_id,
-                    reasoning_effort,
-                    chat.get_openai_response_id(),
                     [&](const std::string& delta) {
                         if (first_chunk.exchange(false)) {
                             // Stop spinner and clear the line before first output.
@@ -835,12 +838,9 @@ int main(int argc, char* argv[]) {
                 renderer.finish();
             } else {
                 // Raw output for non-interactive or --plain mode.
-                result = client.stream_response(
-                    settings.model,
+                result = provider->chat().stream_response(
+                    chat_config,
                     chat.get_api_window(),
-                    settings.vector_store_id,
-                    reasoning_effort,
-                    chat.get_openai_response_id(),
                     [&](const std::string& delta) {
                         if (first_chunk.exchange(false) && !non_interactive) {
                             // Stop spinner and clear the line before first output.
@@ -886,7 +886,7 @@ int main(int argc, char* argv[]) {
             }
 
             // Check if we need to compact the conversation window
-            maybe_compact_chat_window(client, chat, settings.model, result.usage);
+            maybe_compact_chat_window(*provider, chat, settings.model, result.usage);
         } catch (const std::exception& e) {
             // Stop spinner on error.
             stop_spinner.store(true);

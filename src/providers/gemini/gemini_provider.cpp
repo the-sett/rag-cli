@@ -6,8 +6,55 @@
 #include <filesystem>
 #include <thread>
 #include <chrono>
+#include <fstream>
+#include <cstring>
+#include <map>
 
 namespace rag::providers::gemini {
+
+// Get MIME type from file extension
+static std::string get_mime_type(const std::string& filepath) {
+    std::string ext = std::filesystem::path(filepath).extension().string();
+    // Convert to lowercase
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+
+    // Common MIME types for supported file formats
+    static const std::map<std::string, std::string> mime_types = {
+        {".txt", "text/plain"},
+        {".md", "text/markdown"},
+        {".markdown", "text/markdown"},
+        {".pdf", "application/pdf"},
+        {".json", "application/json"},
+        {".yaml", "application/x-yaml"},
+        {".yml", "application/x-yaml"},
+        {".xml", "application/xml"},
+        {".html", "text/html"},
+        {".htm", "text/html"},
+        {".css", "text/css"},
+        {".js", "text/javascript"},
+        {".ts", "text/typescript"},
+        {".py", "text/x-python"},
+        {".c", "text/x-c"},
+        {".cpp", "text/x-c++"},
+        {".h", "text/x-c"},
+        {".hpp", "text/x-c++"},
+        {".java", "text/x-java"},
+        {".go", "text/x-go"},
+        {".rs", "text/x-rust"},
+        {".rb", "text/x-ruby"},
+        {".php", "text/x-php"},
+        {".sh", "text/x-shellscript"},
+        {".bash", "text/x-shellscript"},
+        {".sql", "text/x-sql"},
+        {".csv", "text/csv"},
+    };
+
+    auto it = mime_types.find(ext);
+    if (it != mime_types.end()) {
+        return it->second;
+    }
+    return "application/octet-stream";
+}
 
 using json = nlohmann::json;
 
@@ -78,6 +125,17 @@ GeminiProvider::~GeminiProvider() {
 std::string GeminiProvider::build_url(const std::string& path) {
     // Gemini uses API key as query parameter
     std::string url = api_base_ + path;
+    if (url.find('?') == std::string::npos) {
+        url += "?key=" + api_key_;
+    } else {
+        url += "&key=" + api_key_;
+    }
+    return url;
+}
+
+std::string GeminiProvider::build_upload_url(const std::string& path) {
+    // Use upload base URL instead of regular API base
+    std::string url = std::string(GEMINI_UPLOAD_BASE) + path;
     if (url.find('?') == std::string::npos) {
         url += "?key=" + api_key_;
     } else {
@@ -503,22 +561,193 @@ std::optional<ModelInfo> GeminiProvider::get_model_info(const std::string& model
 
 // ========== IFilesService ==========
 
-std::string GeminiProvider::upload_file(const std::string& filepath) {
-    // For Gemini, files are uploaded to the general Files API
-    // They can then be imported into a File Search Store
-    std::string response = http_post_multipart("/files", filepath, {
-        {"display_name", std::filesystem::path(filepath).filename().string()}
-    });
+// Callback struct for capturing response headers
+struct HeaderContext {
+    std::string upload_url;
+};
 
-    json j = json::parse(response);
+static size_t header_callback(char* buffer, size_t size, size_t nitems, void* userdata) {
+    size_t total_size = size * nitems;
+    auto* ctx = static_cast<HeaderContext*>(userdata);
 
-    // The response contains an operation for async processing
-    if (j.contains("name")) {
-        // This is the file resource name
-        return j["name"].get<std::string>();
+    std::string header(buffer, total_size);
+
+    // Look for X-Goog-Upload-URL header (case-insensitive)
+    const char* prefix = "x-goog-upload-url:";
+    size_t prefix_len = strlen(prefix);
+
+    // Convert header to lowercase for comparison
+    std::string header_lower = header;
+    std::transform(header_lower.begin(), header_lower.end(), header_lower.begin(), ::tolower);
+
+    if (header_lower.substr(0, prefix_len) == prefix) {
+        // Extract the URL value
+        std::string value = header.substr(prefix_len);
+        // Trim whitespace
+        size_t start = value.find_first_not_of(" \t\r\n");
+        size_t end = value.find_last_not_of(" \t\r\n");
+        if (start != std::string::npos && end != std::string::npos) {
+            ctx->upload_url = value.substr(start, end - start + 1);
+        }
     }
 
-    throw std::runtime_error("File upload failed: no file name in response");
+    return total_size;
+}
+
+std::string GeminiProvider::upload_file_resumable(const std::string& filepath) {
+    namespace fs = std::filesystem;
+
+    // Get file info
+    std::string filename = fs::path(filepath).filename().string();
+    std::string mime_type = get_mime_type(filepath);
+    uintmax_t file_size = fs::file_size(filepath);
+
+    rag::verbose_log("GEMINI", "Uploading file: " + filename + " (" + std::to_string(file_size) + " bytes, " + mime_type + ")");
+
+    // Step 1: Initiate resumable upload
+    std::string init_url = build_upload_url("/files");
+    rag::verbose_out("CURL", "POST (resumable init) " + init_url);
+
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        throw std::runtime_error("Failed to initialize CURL");
+    }
+
+    // Build metadata JSON
+    json metadata = {
+        {"file", {
+            {"display_name", filename}
+        }}
+    };
+    std::string metadata_str = metadata.dump();
+
+    rag::verbose_out("CURL", "Metadata: " + metadata_str);
+
+    // Set up headers for resumable upload initiation
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    headers = curl_slist_append(headers, "X-Goog-Upload-Protocol: resumable");
+    headers = curl_slist_append(headers, "X-Goog-Upload-Command: start");
+    headers = curl_slist_append(headers, ("X-Goog-Upload-Header-Content-Length: " + std::to_string(file_size)).c_str());
+    headers = curl_slist_append(headers, ("X-Goog-Upload-Header-Content-Type: " + mime_type).c_str());
+
+    std::string response;
+    HeaderContext header_ctx;
+
+    curl_easy_setopt(curl, CURLOPT_URL, init_url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, metadata_str.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_callback);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &header_ctx);
+
+    if (rag::is_verbose()) {
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+
+    long http_code = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        throw std::runtime_error(std::string("Upload init failed: ") + curl_easy_strerror(res));
+    }
+
+    rag::verbose_in("CURL", "HTTP " + std::to_string(http_code) + " - Upload URL: " + header_ctx.upload_url);
+
+    if (http_code >= 400) {
+        try {
+            json j = json::parse(response);
+            if (j.contains("error") && j["error"].contains("message")) {
+                throw std::runtime_error("Gemini API error: " + j["error"]["message"].get<std::string>());
+            }
+        } catch (const json::exception&) {}
+        throw std::runtime_error("HTTP error " + std::to_string(http_code) + ": " + response.substr(0, 500));
+    }
+
+    if (header_ctx.upload_url.empty()) {
+        throw std::runtime_error("No upload URL received from Gemini API");
+    }
+
+    // Step 2: Upload the file data
+    rag::verbose_out("CURL", "POST (file data) " + header_ctx.upload_url);
+
+    // Read file content
+    std::ifstream file(filepath, std::ios::binary);
+    if (!file.is_open()) {
+        throw std::runtime_error("Cannot open file: " + filepath);
+    }
+
+    std::vector<char> file_data((std::istreambuf_iterator<char>(file)),
+                                 std::istreambuf_iterator<char>());
+    file.close();
+
+    curl = curl_easy_init();
+    if (!curl) {
+        throw std::runtime_error("Failed to initialize CURL");
+    }
+
+    headers = nullptr;
+    headers = curl_slist_append(headers, ("Content-Type: " + mime_type).c_str());
+    headers = curl_slist_append(headers, "X-Goog-Upload-Command: upload, finalize");
+    headers = curl_slist_append(headers, "X-Goog-Upload-Offset: 0");
+
+    response.clear();
+
+    curl_easy_setopt(curl, CURLOPT_URL, header_ctx.upload_url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, file_data.data());
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, file_data.size());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    if (rag::is_verbose()) {
+        curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    }
+
+    res = curl_easy_perform(curl);
+
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        throw std::runtime_error(std::string("File data upload failed: ") + curl_easy_strerror(res));
+    }
+
+    rag::verbose_in("CURL", "HTTP " + std::to_string(http_code) + " - " + rag::truncate(response, 500));
+
+    if (http_code >= 400) {
+        try {
+            json j = json::parse(response);
+            if (j.contains("error") && j["error"].contains("message")) {
+                throw std::runtime_error("Gemini API error: " + j["error"]["message"].get<std::string>());
+            }
+        } catch (const json::exception&) {}
+        throw std::runtime_error("HTTP error " + std::to_string(http_code) + ": " + response.substr(0, 500));
+    }
+
+    // Parse response to get file name
+    json j = json::parse(response);
+
+    // Response format: {"file": {"name": "files/abc123", ...}}
+    if (j.contains("file") && j["file"].contains("name")) {
+        std::string file_name = j["file"]["name"].get<std::string>();
+        rag::verbose_log("GEMINI", "File uploaded: " + file_name);
+        return file_name;
+    }
+
+    throw std::runtime_error("File upload failed: no file name in response. Response: " + response.substr(0, 500));
+}
+
+std::string GeminiProvider::upload_file(const std::string& filepath) {
+    return upload_file_resumable(filepath);
 }
 
 std::vector<UploadResult> GeminiProvider::upload_files_parallel(
@@ -593,9 +822,7 @@ std::vector<DeleteResult> GeminiProvider::delete_files_parallel(
 
 std::string GeminiProvider::create_store(const std::string& name) {
     json body = {
-        {"config", {
-            {"display_name", name}
-        }}
+        {"displayName", name}
     };
 
     std::string response = http_post_json("/fileSearchStores", body);
@@ -625,10 +852,10 @@ std::string GeminiProvider::add_files(const std::string& store_id, const std::ve
 
 void GeminiProvider::add_file(const std::string& store_id, const std::string& file_id) {
     json body = {
-        {"file_name", file_id}
+        {"fileName", file_id}
     };
 
-    std::string response = http_post_json("/" + store_id + "/documents:importFile", body);
+    std::string response = http_post_json("/" + store_id + ":importFile", body);
     json j = json::parse(response);
 
     // This returns an operation - we need to wait for it
@@ -644,6 +871,12 @@ void GeminiProvider::remove_file(const std::string& store_id, const std::string&
 }
 
 std::string GeminiProvider::get_operation_status(const std::string& /*store_id*/, const std::string& operation_id) {
+    // Special case: add_files() already waits for all operations to complete,
+    // so when it returns "batch_complete", there's nothing more to poll
+    if (operation_id == "batch_complete") {
+        return "completed";
+    }
+
     std::string response = http_get("/" + operation_id);
     json j = json::parse(response);
 
@@ -692,8 +925,8 @@ StreamResult GeminiProvider::stream_response(
     // Add file search tool if knowledge store is configured
     if (!config.knowledge_store_id.empty()) {
         body["tools"] = json::array({
-            {{"file_search", {
-                {"file_search_store_names", json::array({config.knowledge_store_id})}
+            {{"fileSearch", {
+                {"fileSearchStoreNames", json::array({config.knowledge_store_id})}
             }}}
         });
     }
@@ -810,8 +1043,8 @@ StreamResult GeminiProvider::stream_response_with_tools(
     // Add file search tool if knowledge store is configured
     if (!config.knowledge_store_id.empty()) {
         tools.push_back({
-            {"file_search", {
-                {"file_search_store_names", json::array({config.knowledge_store_id})}
+            {"fileSearch", {
+                {"fileSearchStoreNames", json::array({config.knowledge_store_id})}
             }}
         });
     }

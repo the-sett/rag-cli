@@ -1,6 +1,5 @@
 #include "vector_store.hpp"
 #include "file_resolver.hpp"
-#include "openai_client.hpp"
 #include "console.hpp"
 #include <filesystem>
 #include <thread>
@@ -100,7 +99,7 @@ FileDiff compute_file_diff(
 
 std::string create_vector_store(
     const std::vector<std::string>& file_patterns,
-    OpenAIClient& client,
+    providers::IAIProvider& provider,
     Console& console,
     std::map<std::string, FileMetadata>& indexed_files
 ) {
@@ -124,7 +123,7 @@ std::string create_vector_store(
     indexed_files.clear();
 
     // Upload files in parallel
-    auto results = client.upload_files_parallel(
+    auto results = provider.files().upload_files_parallel(
         files_to_upload,
         [&console](size_t completed, size_t total) {
             console.start_status("Uploading (" + std::to_string(completed) + "/" +
@@ -160,24 +159,24 @@ std::string create_vector_store(
         return "";
     }
 
-    console.print_warning("Creating vector store...");
+    console.print_warning("Creating knowledge store...");
 
-    std::string vector_store_id;
+    std::string store_id;
     try {
-        vector_store_id = client.create_vector_store("cli-rag-store");
-        console.print_success("Vector store created: " + vector_store_id);
+        store_id = provider.knowledge().create_store("cli-rag-store");
+        console.print_success("Knowledge store created: " + store_id);
     } catch (const std::exception& e) {
-        console.print_error("Failed to create vector store: " + std::string(e.what()));
+        console.print_error("Failed to create knowledge store: " + std::string(e.what()));
         return "";
     }
 
     console.print_warning("Starting batch indexing...");
 
-    std::string batch_id;
+    std::string operation_id;
     try {
-        batch_id = client.create_file_batch(vector_store_id, file_ids);
+        operation_id = provider.knowledge().add_files(store_id, file_ids);
     } catch (const std::exception& e) {
-        console.print_error("Failed to create file batch: " + std::string(e.what()));
+        console.print_error("Failed to add files to store: " + std::string(e.what()));
         return "";
     }
 
@@ -187,13 +186,13 @@ std::string create_vector_store(
     // Poll for batch completion
     while (true) {
         try {
-            std::string status = client.get_batch_status(vector_store_id, batch_id);
+            std::string status = provider.knowledge().get_operation_status(store_id, operation_id);
 
             if (status == "completed") {
                 break;
             } else if (status == "failed") {
                 console.clear_status();
-                console.print_error("Error: Vector store indexing failed");
+                console.print_error("Error: Knowledge store indexing failed");
                 return "";
             }
 
@@ -206,22 +205,22 @@ std::string create_vector_store(
     }
 
     console.clear_status();
-    console.print_success("Vector store ready.");
+    console.print_success("Knowledge store ready.");
 
-    return vector_store_id;
+    return store_id;
 }
 
 void update_vector_store(
-    const std::string& vector_store_id,
+    const std::string& store_id,
     const FileDiff& diff,
-    OpenAIClient& client,
+    providers::IAIProvider& provider,
     Console& console,
     std::map<std::string, FileMetadata>& indexed_files
 ) {
     size_t total_changes = diff.added.size() + diff.modified.size() + diff.removed.size();
 
     if (total_changes == 0) {
-        console.print_success("No changes detected. Vector store is up to date.");
+        console.print_success("No changes detected. Knowledge store is up to date.");
         return;
     }
 
@@ -247,9 +246,9 @@ void update_vector_store(
 
             bool removal_ok = true;
             try {
-                // Remove from vector store - ignore "not found" errors
+                // Remove from knowledge store - ignore "not found" errors
                 try {
-                    client.remove_file_from_vector_store(vector_store_id, it->second.file_id);
+                    provider.knowledge().remove_file(store_id, it->second.file_id);
                 } catch (const std::exception& e) {
                     std::string err(e.what());
                     if (err.find("No such") == std::string::npos &&
@@ -258,9 +257,9 @@ void update_vector_store(
                     }
                 }
 
-                // Delete the file from OpenAI storage - ignore "not found" errors
+                // Delete the file from provider storage - ignore "not found" errors
                 try {
-                    client.delete_file(it->second.file_id);
+                    provider.files().delete_file(it->second.file_id);
                 } catch (const std::exception& e) {
                     std::string err(e.what());
                     if (err.find("No such") == std::string::npos &&
@@ -290,11 +289,11 @@ void update_vector_store(
             console.start_status("Updating: " + display_name);
 
             try {
-                // Try to remove old version from vector store and storage.
-                // If the file no longer exists in OpenAI (e.g., was cleaned up),
+                // Try to remove old version from store and storage.
+                // If the file no longer exists (e.g., was cleaned up),
                 // we treat that as success and proceed with uploading the new version.
                 try {
-                    client.remove_file_from_vector_store(vector_store_id, it->second.file_id);
+                    provider.knowledge().remove_file(store_id, it->second.file_id);
                 } catch (const std::exception& e) {
                     // Ignore "not found" errors - file may already be removed
                     std::string err(e.what());
@@ -305,7 +304,7 @@ void update_vector_store(
                 }
 
                 try {
-                    client.delete_file(it->second.file_id);
+                    provider.files().delete_file(it->second.file_id);
                 } catch (const std::exception& e) {
                     // Ignore "not found" errors - file may already be deleted
                     std::string err(e.what());
@@ -316,9 +315,9 @@ void update_vector_store(
                 }
 
                 // Upload new version
-                std::string new_file_id = client.upload_file(filepath);
-                // Add to vector store
-                client.add_file_to_vector_store(vector_store_id, new_file_id);
+                std::string new_file_id = provider.files().upload_file(filepath);
+                // Add to knowledge store
+                provider.knowledge().add_file(store_id, new_file_id);
 
                 // Update metadata including content hash
                 it->second.file_id = new_file_id;
@@ -342,9 +341,9 @@ void update_vector_store(
 
         try {
             // Upload file
-            std::string file_id = client.upload_file(filepath);
-            // Add to vector store
-            client.add_file_to_vector_store(vector_store_id, file_id);
+            std::string file_id = provider.files().upload_file(filepath);
+            // Add to knowledge store
+            provider.knowledge().add_file(store_id, file_id);
 
             // Record metadata including content hash
             FileMetadata metadata;
@@ -363,21 +362,21 @@ void update_vector_store(
     }
 
     console.println();
-    console.print_success("Vector store updated.");
+    console.print_success("Knowledge store updated.");
 }
 
 std::string rebuild_vector_store(
-    const std::string& old_vector_store_id,
+    const std::string& old_store_id,
     const std::vector<std::string>& file_patterns,
-    OpenAIClient& client,
+    providers::IAIProvider& provider,
     Console& console,
     std::map<std::string, FileMetadata>& indexed_files
 ) {
     console.println();
-    console.print_header("=== Rebuilding Vector Store ===");
+    console.print_header("=== Rebuilding Knowledge Store ===");
     console.println();
 
-    // Step 1: Delete all files from the vector store and OpenAI storage (in parallel)
+    // Step 1: Delete all files from the store and provider storage (in parallel)
     if (!indexed_files.empty()) {
         console.print_warning("Deleting " + std::to_string(indexed_files.size()) + " files (8 parallel connections)...");
 
@@ -389,9 +388,9 @@ std::string rebuild_vector_store(
         }
 
         // Delete files in parallel
-        auto results = client.delete_files_parallel(
-            old_vector_store_id,
+        auto results = provider.files().delete_files_parallel(
             file_ids,
+            old_store_id,
             [&console](size_t completed, size_t total) {
                 console.start_status("Deleting (" + std::to_string(completed) + "/" +
                                     std::to_string(total) + ")...");
@@ -414,28 +413,28 @@ std::string rebuild_vector_store(
         console.print_success("Deleted " + std::to_string(deleted) + " files from storage.");
     }
 
-    // Step 2: Delete the vector store itself
-    console.print_warning("Deleting vector store: " + old_vector_store_id);
+    // Step 2: Delete the store itself
+    console.print_warning("Deleting knowledge store: " + old_store_id);
     try {
-        client.delete_vector_store(old_vector_store_id);
-        console.print_success("Vector store deleted.");
+        provider.knowledge().delete_store(old_store_id);
+        console.print_success("Knowledge store deleted.");
     } catch (const std::exception& e) {
         std::string err(e.what());
         // Ignore "not found" errors - store may already be deleted
         if (err.find("No such") == std::string::npos &&
             err.find("not found") == std::string::npos) {
-            console.print_error("Failed to delete vector store: " + std::string(e.what()));
+            console.print_error("Failed to delete knowledge store: " + std::string(e.what()));
             // Continue anyway - we'll create a new one
         } else {
-            console.print_warning("Vector store already deleted or not found.");
+            console.print_warning("Knowledge store already deleted or not found.");
         }
     }
     console.println();
 
-    // Step 3 & 4: Clear indexed files and create a new vector store with fresh uploads
+    // Step 3 & 4: Clear indexed files and create a new store with fresh uploads
     // This reuses the existing create_vector_store function which handles parallel uploads
     indexed_files.clear();
-    return create_vector_store(file_patterns, client, console, indexed_files);
+    return create_vector_store(file_patterns, provider, console, indexed_files);
 }
 
 } // namespace rag

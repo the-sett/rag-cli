@@ -8,6 +8,7 @@
  */
 
 #include "openai_client.hpp"
+#include "providers/provider.hpp"
 #include <string>
 #include <vector>
 #include <fstream>
@@ -136,6 +137,14 @@ private:
  * @param model Model being used (for looking up max context)
  * @param usage Token usage from the last response
  */
+void maybe_compact_chat_window(
+    providers::IAIProvider& provider,
+    ChatSession& session,
+    const std::string& model,
+    const providers::ResponseUsage& usage
+);
+
+// Overload for backward compatibility with OpenAIClient
 void maybe_compact_chat_window(
     OpenAIClient& client,
     ChatSession& session,

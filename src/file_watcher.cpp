@@ -1,7 +1,6 @@
 #include "file_watcher.hpp"
 #include "vector_store.hpp"
 #include "file_resolver.hpp"
-#include "openai_client.hpp"
 #include "console.hpp"
 #include <iostream>
 #include <filesystem>
@@ -13,11 +12,11 @@ namespace rag {
 
 FileWatcher::FileWatcher(
     Settings& settings,
-    OpenAIClient& client,
+    providers::IAIProvider& provider,
     int poll_interval_seconds
 )
     : settings_(settings)
-    , client_(client)
+    , provider_(provider)
     , poll_interval_seconds_(poll_interval_seconds)
 {
 #ifdef __linux__
@@ -130,11 +129,11 @@ void FileWatcher::check_and_reindex() {
               << diff.removed.size() << " removed" << std::endl;
 
     try {
-        // Apply the changes to the vector store
+        // Apply the changes to the knowledge store
         update_vector_store(
             settings_.vector_store_id,
             diff,
-            client_,
+            provider_,
             console,
             settings_.indexed_files
         );

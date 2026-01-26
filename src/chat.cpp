@@ -245,11 +245,61 @@ void ChatSession::update_title(const std::string& user_message) {
 }
 
 void maybe_compact_chat_window(
+    providers::IAIProvider& provider,
+    ChatSession& session,
+    const std::string& model,
+    const providers::ResponseUsage& usage
+) {
+    // Check if provider supports compaction
+    if (!provider.chat().supports_compaction()) {
+        return;
+    }
+
+    // Get max context window for this model
+    const int max_ctx = get_max_context_tokens_for_model(model);
+    if (max_ctx <= 0) {
+        return;  // Safety check
+    }
+
+    // Calculate how full the context window is
+    const double fullness = static_cast<double>(usage.input_tokens) / static_cast<double>(max_ctx);
+
+    // Only compact if we're over 90% of the context window
+    if (fullness <= 0.9) {
+        return;
+    }
+
+    const std::string& response_id = session.get_openai_response_id();
+    if (response_id.empty()) {
+        return;  // No response ID to compact
+    }
+
+    std::cerr << "[Compact] Context is " << static_cast<int>(fullness * 100)
+              << "% full (" << usage.input_tokens << "/" << max_ctx
+              << " tokens), compacting..." << std::endl;
+
+    try {
+        auto compacted = provider.chat().compact_window(model, response_id);
+        if (compacted) {
+            session.set_api_window(*compacted);
+            // Clear response ID - subsequent calls should use the compacted input directly
+            session.set_openai_response_id("");
+            std::cerr << "[Compact] Window compacted successfully" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[Compact] Warning: Failed to compact window: " << e.what() << std::endl;
+        // Don't fail the overall request if compaction fails
+    }
+}
+
+// Overload for backward compatibility with OpenAIClient
+void maybe_compact_chat_window(
     OpenAIClient& client,
     ChatSession& session,
     const std::string& model,
     const ResponseUsage& usage
 ) {
+    // OpenAIClient wraps an OpenAIProvider which supports compaction
     // Get max context window for this model
     const int max_ctx = get_max_context_tokens_for_model(model);
     if (max_ctx <= 0) {
