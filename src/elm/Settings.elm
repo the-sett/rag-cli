@@ -2,6 +2,7 @@ module Settings exposing
     ( SettingsTab(..)
     , SubmitShortcut(..)
     , ReasoningEffort(..)
+    , Provider(..)
     , AppSettings
     , defaultSettings
     , submitShortcutToString
@@ -12,6 +13,10 @@ module Settings exposing
     , reasoningEffortFromString
     , reasoningEffortLabel
     , allReasoningEfforts
+    , providerToString
+    , providerFromString
+    , providerLabel
+    , allProviders
     , fetchSettings
     , saveSettings
     , settingsDecoder
@@ -21,7 +26,7 @@ module Settings exposing
 {-| Application settings module.
 
 Handles settings like submit shortcut mode for the query input,
-AI model selection, and reasoning effort level.
+AI provider and model selection, and reasoning effort level.
 -}
 
 import Http
@@ -33,7 +38,16 @@ import Json.Encode as Encode
 -}
 type SettingsTab
     = EditingPreferencesTab
-    | AIModelTab
+    | ProviderTab
+    | OpenAITab
+    | GeminiTab
+
+
+{-| AI provider type.
+-}
+type Provider
+    = OpenAI
+    | Gemini
 
 
 {-| Submit shortcut mode for the query input.
@@ -56,6 +70,7 @@ type ReasoningEffort
 -}
 type alias AppSettings =
     { submitShortcut : SubmitShortcut
+    , provider : Provider
     , model : String
     , reasoningEffort : ReasoningEffort
     }
@@ -66,6 +81,7 @@ type alias AppSettings =
 defaultSettings : AppSettings
 defaultSettings =
     { submitShortcut = ShiftEnter
+    , provider = OpenAI
     , model = ""
     , reasoningEffort = Medium
     }
@@ -88,6 +104,15 @@ allReasoningEfforts =
     [ Low
     , Medium
     , High
+    ]
+
+
+{-| All provider options.
+-}
+allProviders : List Provider
+allProviders =
+    [ OpenAI
+    , Gemini
     ]
 
 
@@ -181,12 +206,49 @@ reasoningEffortLabel effort =
             "High"
 
 
+{-| Convert a provider to its JSON string representation.
+-}
+providerToString : Provider -> String
+providerToString provider =
+    case provider of
+        OpenAI ->
+            "openai"
+
+        Gemini ->
+            "gemini"
+
+
+{-| Convert a JSON string to a provider.
+-}
+providerFromString : String -> Provider
+providerFromString str =
+    case str of
+        "gemini" ->
+            Gemini
+
+        _ ->
+            OpenAI
+
+
+{-| Human-readable label for a provider.
+-}
+providerLabel : Provider -> String
+providerLabel provider =
+    case provider of
+        OpenAI ->
+            "OpenAI"
+
+        Gemini ->
+            "Google Gemini"
+
+
 {-| Decoder for settings from the server.
 -}
 settingsDecoder : Decoder AppSettings
 settingsDecoder =
-    Decode.map3 AppSettings
+    Decode.map4 AppSettings
         (Decode.field "submit_shortcut" submitShortcutDecoder)
+        (Decode.field "provider" providerDecoder)
         (Decode.field "model" Decode.string)
         (Decode.field "reasoning_effort" reasoningEffortDecoder)
 
@@ -207,12 +269,21 @@ reasoningEffortDecoder =
         |> Decode.map reasoningEffortFromString
 
 
+{-| Decoder for provider.
+-}
+providerDecoder : Decoder Provider
+providerDecoder =
+    Decode.string
+        |> Decode.map providerFromString
+
+
 {-| Encode settings for sending to the server.
 -}
 encodeSettings : AppSettings -> Encode.Value
 encodeSettings settings =
     Encode.object
         [ ( "submit_shortcut", Encode.string (submitShortcutToString settings.submitShortcut) )
+        , ( "provider", Encode.string (providerToString settings.provider) )
         , ( "model", Encode.string settings.model )
         , ( "reasoning_effort", Encode.string (reasoningEffortToString settings.reasoningEffort) )
         ]

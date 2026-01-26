@@ -4,7 +4,7 @@
  * Settings persistence for the crag CLI.
  *
  * Handles loading and saving of application settings to a local JSON file,
- * including model selection, vector store ID, and indexed file metadata.
+ * including provider selection, model selection, vector store ID, and indexed file metadata.
  */
 
 #include <string>
@@ -16,13 +16,25 @@
 namespace rag {
 
 /**
+ * AI provider type.
+ */
+enum class Provider {
+    OpenAI,
+    Gemini
+};
+
+// Convert Provider to/from string for JSON serialization
+std::string provider_to_string(Provider provider);
+Provider provider_from_string(const std::string& str);
+
+/**
  * Metadata for a single indexed file.
  *
- * Tracks the OpenAI file ID and modification timestamp to enable incremental
+ * Tracks the provider file ID and modification timestamp to enable incremental
  * updates when files change.
  */
 struct FileMetadata {
-    std::string openai_file_id;  // OpenAI file ID for this file.
+    std::string file_id;         // Provider-specific file ID for this file.
     int64_t last_modified;       // Unix timestamp of last modification.
     std::string content_hash;    // Hash of file contents for change detection.
 };
@@ -73,13 +85,14 @@ SubmitShortcut submit_shortcut_from_string(const std::string& str);
 /**
  * Application settings stored in .crag.json.
  *
- * Contains model configuration, vector store reference, and metadata for
- * all indexed files.
+ * Contains provider selection, model configuration, vector store reference,
+ * and metadata for all indexed files.
  */
 struct Settings {
-    std::string model;                                    // Selected OpenAI model.
+    Provider provider = Provider::OpenAI;                 // Selected AI provider.
+    std::string model;                                    // Selected model for current provider.
     std::string reasoning_effort;                         // Thinking level (low/medium/high).
-    std::string vector_store_id;                          // OpenAI vector store ID.
+    std::string vector_store_id;                          // Knowledge store ID (vector store for OpenAI, file search store for Gemini).
     std::vector<std::string> file_patterns;               // Original glob patterns.
     std::map<std::string, FileMetadata> indexed_files;    // Filepath to metadata mapping.
     std::vector<ChatInfo> chats;                          // Chat session history.

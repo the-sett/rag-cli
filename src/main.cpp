@@ -13,6 +13,8 @@
 #include "mcp_server.hpp"
 #include "file_watcher.hpp"
 #include "verbose.hpp"
+#include "providers/factory.hpp"
+#include "providers/provider.hpp"
 
 #include <CLI/CLI.hpp>
 #include <iostream>
@@ -54,14 +56,111 @@ void signal_handler(int) {
 
 // ========== Interactive Selection ==========
 
-// Prompts the user to select a model from available GPT-5 models.
-std::string select_model(OpenAIClient& client, Console& console) {
+// Checks which API keys are available and returns list of available providers.
+std::vector<Provider> get_available_providers() {
+    std::vector<Provider> available;
+
+    const char* openai_key = std::getenv("OPEN_AI_API_KEY");
+    if (openai_key && std::string(openai_key).length() > 0) {
+        available.push_back(Provider::OpenAI);
+    }
+
+    const char* gemini_key = std::getenv("GEMINI_API_KEY");
+    if (gemini_key && std::string(gemini_key).length() > 0) {
+        available.push_back(Provider::Gemini);
+    }
+
+    return available;
+}
+
+// Gets the API key for the given provider.
+std::string get_api_key_for_provider(Provider provider) {
+    switch (provider) {
+        case Provider::OpenAI: {
+            const char* key = std::getenv("OPEN_AI_API_KEY");
+            return key ? std::string(key) : "";
+        }
+        case Provider::Gemini: {
+            const char* key = std::getenv("GEMINI_API_KEY");
+            return key ? std::string(key) : "";
+        }
+        default:
+            return "";
+    }
+}
+
+// Creates a provider instance for the given provider type.
+std::unique_ptr<providers::IAIProvider> create_provider(Provider provider) {
+    std::string api_key = get_api_key_for_provider(provider);
+    if (api_key.empty()) {
+        throw std::runtime_error("API key not set for provider");
+    }
+
+    providers::ProviderConfig config;
+    config.type = (provider == Provider::OpenAI)
+        ? providers::ProviderType::OpenAI
+        : providers::ProviderType::Gemini;
+    config.api_key = api_key;
+
+    return providers::ProviderFactory::create(config);
+}
+
+// Prompts the user to select a provider.
+Provider select_provider(const std::vector<Provider>& available, Console& console) {
+    if (available.empty()) {
+        console.print_error("No API keys found!");
+        console.println("Set OPEN_AI_API_KEY or GEMINI_API_KEY environment variable.");
+        std::exit(1);
+    }
+
+    // Always show provider selection, marking which have API keys available
+    console.println();
+    console.print_header("Available providers:");
+
+    // Show all providers, indicating which have API keys
+    std::vector<Provider> all_providers = {Provider::OpenAI, Provider::Gemini};
+    for (size_t i = 0; i < all_providers.size(); ++i) {
+        std::string name = (all_providers[i] == Provider::OpenAI) ? "OpenAI" : "Google Gemini";
+        bool has_key = std::find(available.begin(), available.end(), all_providers[i]) != available.end();
+        if (has_key) {
+            console.println("  " + std::to_string(i + 1) + ". " + name);
+        } else {
+            console.println("  " + std::to_string(i + 1) + ". " + name + " (no API key set)");
+        }
+    }
+
+    console.println();
+    while (true) {
+        std::string choice = console.prompt("Select provider number", "1");
+        try {
+            size_t idx = std::stoul(choice) - 1;
+            if (idx < all_providers.size()) {
+                Provider selected = all_providers[idx];
+                bool has_key = std::find(available.begin(), available.end(), selected) != available.end();
+                if (!has_key) {
+                    std::string env_var = (selected == Provider::OpenAI) ? "OPEN_AI_API_KEY" : "GEMINI_API_KEY";
+                    console.print_error("Error: " + env_var + " environment variable not set");
+                    continue;
+                }
+                std::string name = (selected == Provider::OpenAI) ? "OpenAI" : "Google Gemini";
+                console.print_success("Selected: " + name);
+                return selected;
+            }
+        } catch (...) {
+            // Invalid input, continue prompting.
+        }
+        console.print_error("Invalid choice, try again");
+    }
+}
+
+// Prompts the user to select a model from available models.
+std::string select_model(providers::IAIProvider& provider, Console& console) {
     console.println();
     console.print_warning("Fetching available models...");
 
-    std::vector<std::string> models;
+    std::vector<providers::ModelInfo> models;
     try {
-        models = client.list_models();
+        models = provider.models().list_models();
     } catch (const std::exception& e) {
         console.print_error("Failed to fetch models: " + std::string(e.what()));
         std::exit(1);
@@ -75,7 +174,8 @@ std::string select_model(OpenAIClient& client, Console& console) {
     console.println();
     console.print_header("Available models:");
     for (size_t i = 0; i < models.size(); ++i) {
-        console.println("  " + std::to_string(i + 1) + ". " + models[i]);
+        std::string display = models[i].display_name.empty() ? models[i].id : models[i].display_name;
+        console.println("  " + std::to_string(i + 1) + ". " + display);
     }
 
     console.println();
@@ -84,7 +184,7 @@ std::string select_model(OpenAIClient& client, Console& console) {
         try {
             size_t idx = std::stoul(choice) - 1;
             if (idx < models.size()) {
-                std::string selected = models[idx];
+                std::string selected = models[idx].id;
                 console.print_success("Selected: " + selected);
                 return selected;
             }
@@ -138,12 +238,12 @@ std::string build_system_prompt() {
 // ========== Settings Management ==========
 
 // Loads existing settings or creates new ones through interactive setup.
-Settings load_or_create_settings(
+// Returns both the settings and a provider instance (created or based on existing settings).
+std::pair<Settings, std::unique_ptr<providers::IAIProvider>> load_or_create_settings(
     const std::vector<std::string>& files,
     bool reindex,
     bool rebuild,
     bool non_interactive,
-    OpenAIClient& client,
     Console& console
 ) {
     auto existing = load_settings();
@@ -152,6 +252,10 @@ Settings load_or_create_settings(
     // If rebuild is requested with existing valid settings, delete everything and recreate.
     if (rebuild && has_valid_settings) {
         Settings settings = *existing;
+
+        // Create provider based on existing settings
+        auto provider = create_provider(settings.provider);
+        OpenAIClient client(get_api_key_for_provider(settings.provider));
 
         // Use new file patterns if provided, otherwise use stored patterns.
         std::vector<std::string> patterns_to_use = files.empty() ? settings.file_patterns : files;
@@ -184,12 +288,16 @@ Settings load_or_create_settings(
 
         // Save updated settings.
         save_settings(settings);
-        return settings;
+        return {settings, std::move(provider)};
     }
 
     // If reindex is requested with existing valid settings, do incremental update.
     if (reindex && has_valid_settings) {
         Settings settings = *existing;
+
+        // Create provider based on existing settings
+        auto provider = create_provider(settings.provider);
+        OpenAIClient client(get_api_key_for_provider(settings.provider));
 
         // Use new file patterns if provided, otherwise use stored patterns.
         std::vector<std::string> patterns_to_use = files.empty() ? settings.file_patterns : files;
@@ -221,33 +329,41 @@ Settings load_or_create_settings(
 
         // Save updated settings.
         save_settings(settings);
-        return settings;
+        return {settings, std::move(provider)};
     }
 
     // No reindex requested and we have valid settings - just use them.
     if (!reindex && has_valid_settings) {
+        Settings settings = *existing;
+
+        // Create provider based on existing settings
+        auto provider = create_provider(settings.provider);
+
         if (!non_interactive) {
+            std::string provider_name = (settings.provider == Provider::OpenAI) ? "OpenAI" : "Google Gemini";
+            console.print_colored("Provider: ", ansi::GREEN);
+            console.println(provider_name);
             console.print_colored("Using model: ", ansi::GREEN);
-            console.println(existing->model);
-            if (!existing->reasoning_effort.empty()) {
+            console.println(settings.model);
+            if (!settings.reasoning_effort.empty()) {
                 console.print_colored("Reasoning effort: ", ansi::GREEN);
-                console.println(existing->reasoning_effort);
+                console.println(settings.reasoning_effort);
             }
             console.print_colored("Using vector store: ", ansi::GREEN);
-            console.println(existing->vector_store_id);
-            if (!existing->file_patterns.empty()) {
+            console.println(settings.vector_store_id);
+            if (!settings.file_patterns.empty()) {
                 console.print_colored("Indexed patterns: ", ansi::GREEN);
                 std::string patterns;
-                for (size_t i = 0; i < existing->file_patterns.size(); ++i) {
+                for (size_t i = 0; i < settings.file_patterns.size(); ++i) {
                     if (i > 0) patterns += ", ";
-                    patterns += existing->file_patterns[i];
+                    patterns += settings.file_patterns[i];
                 }
                 console.println(patterns);
             }
             console.print_colored("Indexed files: ", ansi::GREEN);
-            console.println(std::to_string(existing->indexed_files.size()));
+            console.println(std::to_string(settings.indexed_files.size()));
         }
-        return *existing;
+        return {settings, std::move(provider)};
     }
 
     // First time setup - need file patterns.
@@ -265,10 +381,34 @@ Settings load_or_create_settings(
         std::exit(1);
     }
 
-    // First time - select model, reasoning, and create vector store.
+    // First time setup flow: provider → model → thinking level → vector store
+
+    // Step 1: Select provider
+    auto available_providers = get_available_providers();
+    if (available_providers.empty()) {
+        console.print_error("No API keys found!");
+        console.println("Set OPEN_AI_API_KEY or GEMINI_API_KEY environment variable.");
+        std::exit(1);
+    }
+
+    Provider selected_provider = select_provider(available_providers, console);
+    auto provider = create_provider(selected_provider);
+
+    // Step 2: Select model
+    std::string selected_model = select_model(*provider, console);
+
+    // Step 3: Select reasoning effort
+    std::string reasoning_effort = select_reasoning_effort(console);
+
+    // Step 4: Create vector store and upload files
+    // Note: For now, we still use OpenAIClient for vector store operations
+    // TODO: Migrate vector_store.cpp to use IAIProvider
+    OpenAIClient client(get_api_key_for_provider(selected_provider));
+
     Settings settings;
-    settings.model = select_model(client, console);
-    settings.reasoning_effort = select_reasoning_effort(console);
+    settings.provider = selected_provider;
+    settings.model = selected_model;
+    settings.reasoning_effort = reasoning_effort;
     settings.file_patterns = files;
     settings.vector_store_id = create_vector_store(files, client, console, settings.indexed_files);
 
@@ -277,7 +417,7 @@ Settings load_or_create_settings(
     }
 
     save_settings(settings);
-    return settings;
+    return {settings, std::move(provider)};
 }
 
 // ========== Main Entry Point ==========
@@ -358,13 +498,6 @@ int main(int argc, char* argv[]) {
         console.println();
         console.print_header("=== CRAG Web Server ===");
 
-        // Check for API key.
-        const char* api_key_env = std::getenv("OPEN_AI_API_KEY");
-        if (!api_key_env || std::string(api_key_env).empty()) {
-            console.print_error("Error: OPEN_AI_API_KEY environment variable not set");
-            return 1;
-        }
-
         // Load settings (must have existing settings for server mode).
         auto existing = load_settings();
         if (!existing.has_value() || !existing->is_valid()) {
@@ -374,10 +507,21 @@ int main(int argc, char* argv[]) {
 
         Settings settings = *existing;
 
+        // Check for API key for the configured provider.
+        std::string api_key = get_api_key_for_provider(settings.provider);
+        if (api_key.empty()) {
+            std::string env_var = (settings.provider == Provider::OpenAI) ? "OPEN_AI_API_KEY" : "GEMINI_API_KEY";
+            console.print_error("Error: " + env_var + " environment variable not set");
+            return 1;
+        }
+
         // Validate chats - remove entries for deleted chat files
         validate_chats(settings);
         save_settings(settings);
 
+        std::string provider_name = (settings.provider == Provider::OpenAI) ? "OpenAI" : "Google Gemini";
+        console.print_colored("Provider: ", ansi::GREEN);
+        console.println(provider_name);
         console.print_colored("Using model: ", ansi::GREEN);
         console.println(settings.model);
         console.print_colored("Vector store: ", ansi::GREEN);
@@ -396,8 +540,9 @@ int main(int argc, char* argv[]) {
 
         std::string system_prompt = build_system_prompt();
 
-        // Create OpenAI client.
-        OpenAIClient client(api_key_env);
+        // Create OpenAI client (for backward compatibility).
+        // TODO: Migrate to using IAIProvider directly.
+        OpenAIClient client(api_key);
 
         // Use embedded resources by default, or filesystem if --www-dir specified.
         std::unique_ptr<HttpServer> http_server;
@@ -480,13 +625,6 @@ int main(int argc, char* argv[]) {
 
     // MCP server mode - run as MCP server for Claude Code integration.
     if (mcp_mode) {
-        // Check for API key.
-        const char* api_key_env = std::getenv("OPEN_AI_API_KEY");
-        if (!api_key_env || std::string(api_key_env).empty()) {
-            std::cerr << "Error: OPEN_AI_API_KEY environment variable not set" << std::endl;
-            return 1;
-        }
-
         // Load settings (must have existing settings for MCP mode).
         auto existing = load_settings();
         if (!existing.has_value() || !existing->is_valid()) {
@@ -495,6 +633,14 @@ int main(int argc, char* argv[]) {
         }
 
         Settings settings = *existing;
+
+        // Check for API key for the configured provider.
+        std::string api_key = get_api_key_for_provider(settings.provider);
+        if (api_key.empty()) {
+            std::string env_var = (settings.provider == Provider::OpenAI) ? "OPEN_AI_API_KEY" : "GEMINI_API_KEY";
+            std::cerr << "Error: " << env_var << " environment variable not set" << std::endl;
+            return 1;
+        }
 
         // Validate chats - remove entries for deleted chat files
         validate_chats(settings);
@@ -511,8 +657,9 @@ int main(int argc, char* argv[]) {
 
         std::string system_prompt = build_system_prompt();
 
-        // Create OpenAI client.
-        OpenAIClient client(api_key_env);
+        // Create OpenAI client (for backward compatibility).
+        // TODO: Migrate to using IAIProvider directly.
+        OpenAIClient client(api_key);
 
         // Create and run MCP server.
         std::cerr << "MCP: Starting crag MCP server" << std::endl;
@@ -546,17 +693,22 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Check for API key.
-    const char* api_key = std::getenv("OPEN_AI_API_KEY");
-    if (!api_key || std::string(api_key).empty()) {
-        console.print_error("Error: OPEN_AI_API_KEY environment variable not set");
+    // Check for at least one API key.
+    auto available_providers = get_available_providers();
+    if (available_providers.empty()) {
+        console.print_error("Error: No API keys found");
+        console.println("Set OPEN_AI_API_KEY or GEMINI_API_KEY environment variable.");
         return 1;
     }
 
-    OpenAIClient client(api_key);
+    // Load or create settings (includes provider selection for first-time setup).
+    auto settings_and_provider = load_or_create_settings(files, reindex, rebuild, non_interactive, console);
+    Settings settings = std::move(settings_and_provider.first);
+    auto provider = std::move(settings_and_provider.second);
 
-    // Load or create settings.
-    Settings settings = load_or_create_settings(files, reindex, rebuild, non_interactive, client, console);
+    // Create OpenAIClient for backward compatibility with chat operations
+    // TODO: Migrate chat.cpp to use IAIProvider directly
+    OpenAIClient client(get_api_key_for_provider(settings.provider));
 
     // Determine reasoning effort.
     std::string reasoning_effort = settings.reasoning_effort;

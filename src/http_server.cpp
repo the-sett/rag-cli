@@ -210,6 +210,7 @@ bool HttpServer::start(const std::string& address, int port) {
 
         json settings_json = {
             {"submit_shortcut", submit_shortcut_to_string(settings_->submit_shortcut)},
+            {"provider", provider_to_string(settings_->provider)},
             {"model", settings_->model},
             {"reasoning_effort", settings_->reasoning_effort}
         };
@@ -237,6 +238,11 @@ bool HttpServer::start(const std::string& address, int port) {
                 settings_->submit_shortcut = submit_shortcut_from_string(body["submit_shortcut"].get<std::string>());
             }
 
+            // Update provider if provided
+            if (body.contains("provider") && body["provider"].is_string()) {
+                settings_->provider = provider_from_string(body["provider"].get<std::string>());
+            }
+
             // Update model if provided
             if (body.contains("model") && body["model"].is_string()) {
                 settings_->model = body["model"].get<std::string>();
@@ -251,6 +257,7 @@ bool HttpServer::start(const std::string& address, int port) {
 
             json response = {
                 {"submit_shortcut", submit_shortcut_to_string(settings_->submit_shortcut)},
+                {"provider", provider_to_string(settings_->provider)},
                 {"model", settings_->model},
                 {"reasoning_effort", settings_->reasoning_effort}
             };

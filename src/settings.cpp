@@ -10,6 +10,19 @@ namespace rag {
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+std::string provider_to_string(Provider provider) {
+    switch (provider) {
+        case Provider::OpenAI: return "openai";
+        case Provider::Gemini: return "gemini";
+        default: return "openai";
+    }
+}
+
+Provider provider_from_string(const std::string& str) {
+    if (str == "gemini") return Provider::Gemini;
+    return Provider::OpenAI;  // Default
+}
+
 std::string submit_shortcut_to_string(SubmitShortcut mode) {
     switch (mode) {
         case SubmitShortcut::EnterOnce: return "enter_once";
@@ -40,6 +53,12 @@ std::optional<Settings> load_settings() {
         file >> j;
 
         Settings settings;
+
+        // Load provider (defaults to OpenAI for backward compatibility)
+        if (j.contains("provider") && j["provider"].is_string()) {
+            settings.provider = provider_from_string(j["provider"].get<std::string>());
+        }
+
         settings.model = j.value("model", "");
         settings.reasoning_effort = j.value("reasoning_effort", "");
         settings.vector_store_id = j.value("vector_store_id", "");
@@ -55,7 +74,8 @@ std::optional<Settings> load_settings() {
         if (j.contains("indexed_files") && j["indexed_files"].is_object()) {
             for (const auto& [filepath, metadata] : j["indexed_files"].items()) {
                 FileMetadata fm;
-                fm.openai_file_id = metadata.value("openai_file_id", "");
+                // Support both new "file_id" and legacy "openai_file_id"
+                fm.file_id = metadata.value("file_id", metadata.value("openai_file_id", ""));
                 fm.last_modified = metadata.value("last_modified", int64_t(0));
                 fm.content_hash = metadata.value("content_hash", "");
                 settings.indexed_files[filepath] = fm;
@@ -104,6 +124,7 @@ std::optional<Settings> load_settings() {
 
 void save_settings(const Settings& settings) {
     json j;
+    j["provider"] = provider_to_string(settings.provider);
     j["model"] = settings.model;
     j["reasoning_effort"] = settings.reasoning_effort;
     j["vector_store_id"] = settings.vector_store_id;
@@ -112,7 +133,7 @@ void save_settings(const Settings& settings) {
     json indexed_files_json = json::object();
     for (const auto& [filepath, metadata] : settings.indexed_files) {
         json file_meta = {
-            {"openai_file_id", metadata.openai_file_id},
+            {"file_id", metadata.file_id},
             {"last_modified", metadata.last_modified}
         };
         if (!metadata.content_hash.empty()) {

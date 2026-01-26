@@ -16,7 +16,7 @@ import Pages.Chat.Component as Chat
 import Pages.Intro.Component as Intro
 import Ports
 import Procedure.Program
-import Settings exposing (AppSettings, ReasoningEffort, SettingsTab(..), SubmitShortcut)
+import Settings exposing (AppSettings, Provider(..), ReasoningEffort, SettingsTab(..), SubmitShortcut)
 import Update2 as U2
 import Websocket
 
@@ -108,6 +108,7 @@ type Msg
     | CloseSettingsModal
     | SetSettingsTab SettingsTab
     | SetPendingShortcut SubmitShortcut
+    | SetPendingProvider Provider
     | SetPendingModel String
     | SetPendingReasoningEffort ReasoningEffort
     | GotModels (Result Http.Error (List String))
@@ -420,6 +421,13 @@ update msg model =
                     model.pendingSettings
             in
             U2.pure { model | pendingSettings = { pending | submitShortcut = shortcut } }
+
+        SetPendingProvider provider ->
+            let
+                pending =
+                    model.pendingSettings
+            in
+            U2.pure { model | pendingSettings = { pending | provider = provider } }
 
         SetPendingModel modelName ->
             let
@@ -822,7 +830,9 @@ viewSettingsNav activeTab =
     HS.nav
         [ HA.class "settings-nav" ]
         [ viewNavItem EditingPreferencesTab "Editing" activeTab
-        , viewNavItem AIModelTab "AI Model" activeTab
+        , viewNavItem ProviderTab "Provider" activeTab
+        , viewNavItem OpenAITab "OpenAI" activeTab
+        , viewNavItem GeminiTab "Gemini" activeTab
         ]
 
 
@@ -854,8 +864,14 @@ viewSettingsContent model =
             EditingPreferencesTab ->
                 viewEditingPreferences model.pendingSettings
 
-            AIModelTab ->
-                viewAIModelSettings model
+            ProviderTab ->
+                viewProviderSettings model.pendingSettings
+
+            OpenAITab ->
+                viewOpenAISettings model
+
+            GeminiTab ->
+                viewGeminiSettings model
         ]
 
 
@@ -878,15 +894,75 @@ viewEditingPreferences settings =
         ]
 
 
-viewAIModelSettings : Model -> Html Msg
-viewAIModelSettings model =
+viewProviderSettings : AppSettings -> Html Msg
+viewProviderSettings settings =
     HS.div
         [ HA.class "settings-section" ]
         [ HS.h4
             [ HA.class "settings-section-title" ]
-            [ HS.text "AI Model" ]
+            [ HS.text "AI Provider" ]
+        , HS.p
+            [ HA.class "settings-help-text" ]
+            [ HS.text "Select which AI provider to use for chat." ]
+        , HS.div
+            [ HA.class "settings-radio-group" ]
+            (List.map (viewProviderOption settings.provider) Settings.allProviders)
+        ]
+
+
+viewProviderOption : Provider -> Provider -> Html Msg
+viewProviderOption selectedProvider provider =
+    let
+        isSelected =
+            selectedProvider == provider
+
+        optionClass =
+            if isSelected then
+                "settings-radio-option settings-radio-option-selected"
+
+            else
+                "settings-radio-option"
+    in
+    HS.label
+        [ HA.class optionClass
+        , HE.onClick (SetPendingProvider provider)
+        ]
+        [ HS.input
+            [ HA.type_ "radio"
+            , HA.class "settings-radio-input"
+            , HA.name "provider"
+            , HA.checked isSelected
+            ]
+            []
+        , HS.span
+            [ HA.class "settings-radio-text" ]
+            [ HS.text (Settings.providerLabel provider) ]
+        ]
+
+
+viewOpenAISettings : Model -> Html Msg
+viewOpenAISettings model =
+    HS.div
+        [ HA.class "settings-section" ]
+        [ HS.h4
+            [ HA.class "settings-section-title" ]
+            [ HS.text "OpenAI Settings" ]
         , viewModelDropdown model
         , viewReasoningEffortRadios model.pendingSettings.reasoningEffort
+        ]
+
+
+viewGeminiSettings : Model -> Html Msg
+viewGeminiSettings model =
+    HS.div
+        [ HA.class "settings-section" ]
+        [ HS.h4
+            [ HA.class "settings-section-title" ]
+            [ HS.text "Gemini Settings" ]
+        , HS.p
+            [ HA.class "settings-help-text" ]
+            [ HS.text "Gemini settings will be available when using the Gemini provider." ]
+        , viewModelDropdown model
         ]
 
 

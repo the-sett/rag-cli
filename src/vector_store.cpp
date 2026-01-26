@@ -142,7 +142,7 @@ std::string create_vector_store(
 
             // Record the file metadata including content hash
             FileMetadata metadata;
-            metadata.openai_file_id = result.file_id;
+            metadata.file_id = result.file_id;
             metadata.last_modified = get_file_mtime(result.filepath);
             metadata.content_hash = compute_file_hash(result.filepath);
             indexed_files[result.filepath] = metadata;
@@ -249,7 +249,7 @@ void update_vector_store(
             try {
                 // Remove from vector store - ignore "not found" errors
                 try {
-                    client.remove_file_from_vector_store(vector_store_id, it->second.openai_file_id);
+                    client.remove_file_from_vector_store(vector_store_id, it->second.file_id);
                 } catch (const std::exception& e) {
                     std::string err(e.what());
                     if (err.find("No such") == std::string::npos &&
@@ -260,7 +260,7 @@ void update_vector_store(
 
                 // Delete the file from OpenAI storage - ignore "not found" errors
                 try {
-                    client.delete_file(it->second.openai_file_id);
+                    client.delete_file(it->second.file_id);
                 } catch (const std::exception& e) {
                     std::string err(e.what());
                     if (err.find("No such") == std::string::npos &&
@@ -294,7 +294,7 @@ void update_vector_store(
                 // If the file no longer exists in OpenAI (e.g., was cleaned up),
                 // we treat that as success and proceed with uploading the new version.
                 try {
-                    client.remove_file_from_vector_store(vector_store_id, it->second.openai_file_id);
+                    client.remove_file_from_vector_store(vector_store_id, it->second.file_id);
                 } catch (const std::exception& e) {
                     // Ignore "not found" errors - file may already be removed
                     std::string err(e.what());
@@ -305,7 +305,7 @@ void update_vector_store(
                 }
 
                 try {
-                    client.delete_file(it->second.openai_file_id);
+                    client.delete_file(it->second.file_id);
                 } catch (const std::exception& e) {
                     // Ignore "not found" errors - file may already be deleted
                     std::string err(e.what());
@@ -321,7 +321,7 @@ void update_vector_store(
                 client.add_file_to_vector_store(vector_store_id, new_file_id);
 
                 // Update metadata including content hash
-                it->second.openai_file_id = new_file_id;
+                it->second.file_id = new_file_id;
                 it->second.last_modified = get_file_mtime(filepath);
                 it->second.content_hash = compute_file_hash(filepath);
 
@@ -348,7 +348,7 @@ void update_vector_store(
 
             // Record metadata including content hash
             FileMetadata metadata;
-            metadata.openai_file_id = file_id;
+            metadata.file_id = file_id;
             metadata.last_modified = get_file_mtime(filepath);
             metadata.content_hash = compute_file_hash(filepath);
             indexed_files[filepath] = metadata;
@@ -385,7 +385,7 @@ std::string rebuild_vector_store(
         std::vector<std::string> file_ids;
         file_ids.reserve(indexed_files.size());
         for (const auto& [filepath, metadata] : indexed_files) {
-            file_ids.push_back(metadata.openai_file_id);
+            file_ids.push_back(metadata.file_id);
         }
 
         // Delete files in parallel
