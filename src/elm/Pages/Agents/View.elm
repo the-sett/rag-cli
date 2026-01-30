@@ -156,6 +156,9 @@ viewAgentEditor actions model =
 
         placeholderText =
             case actions.submitShortcut of
+                NoShortcut ->
+                    "Enter agent instructions... (first line becomes the name, click Save to submit)"
+
                 EnterOnce ->
                     "Enter agent instructions... (first line becomes the name, press Enter to save)"
 
@@ -220,6 +223,10 @@ enterKeyDecoder actions lastEnterTime =
     let
         decodeKey key shiftKey altKey =
             case actions.submitShortcut of
+                NoShortcut ->
+                    -- No keyboard shortcut, Enter always inserts newline
+                    Decode.fail "No shortcut mode - let all keys pass through"
+
                 EnterOnce ->
                     -- Enter submits, Shift+Enter or Alt+Enter inserts newline
                     if key == "Enter" then

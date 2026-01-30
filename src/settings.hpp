@@ -73,6 +73,7 @@ struct AgentInfo {
  * Controls how Enter key behaves in the query input.
  */
 enum class SubmitShortcut {
+    NoShortcut,      // No keyboard shortcut, button only
     EnterOnce,       // Single Enter submits
     ShiftEnter,      // Shift+Enter submits
     EnterTwice       // Double Enter (quick succession) submits
@@ -97,7 +98,7 @@ struct Settings {
     std::map<std::string, FileMetadata> indexed_files;    // Filepath to metadata mapping.
     std::vector<ChatInfo> chats;                          // Chat session history.
     std::vector<AgentInfo> agents;                        // Agent definitions.
-    SubmitShortcut submit_shortcut = SubmitShortcut::ShiftEnter;  // Query submit shortcut mode.
+    SubmitShortcut submit_shortcut = SubmitShortcut::NoShortcut;  // Query submit shortcut mode.
 
     // Returns true if settings contain required fields for operation.
     bool is_valid() const {

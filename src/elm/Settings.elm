@@ -53,7 +53,8 @@ type Provider
 {-| Submit shortcut mode for the query input.
 -}
 type SubmitShortcut
-    = EnterOnce -- Single Enter submits
+    = NoShortcut -- No keyboard shortcut, button only
+    | EnterOnce -- Single Enter submits
     | ShiftEnter -- Shift+Enter submits
     | EnterTwice -- Double Enter (quick succession) submits
 
@@ -80,7 +81,7 @@ type alias AppSettings =
 -}
 defaultSettings : AppSettings
 defaultSettings =
-    { submitShortcut = ShiftEnter
+    { submitShortcut = NoShortcut
     , provider = OpenAI
     , model = ""
     , reasoningEffort = Medium
@@ -91,7 +92,8 @@ defaultSettings =
 -}
 allSubmitShortcuts : List SubmitShortcut
 allSubmitShortcuts =
-    [ EnterOnce
+    [ NoShortcut
+    , EnterOnce
     , ShiftEnter
     , EnterTwice
     ]
@@ -121,6 +123,9 @@ allProviders =
 submitShortcutToString : SubmitShortcut -> String
 submitShortcutToString shortcut =
     case shortcut of
+        NoShortcut ->
+            "no_shortcut"
+
         EnterOnce ->
             "enter_once"
 
@@ -136,6 +141,9 @@ submitShortcutToString shortcut =
 submitShortcutFromString : String -> SubmitShortcut
 submitShortcutFromString str =
     case str of
+        "enter_once" ->
+            EnterOnce
+
         "shift_enter" ->
             ShiftEnter
 
@@ -143,7 +151,7 @@ submitShortcutFromString str =
             EnterTwice
 
         _ ->
-            EnterOnce
+            NoShortcut
 
 
 {-| Human-readable label for a submit shortcut.
@@ -151,6 +159,9 @@ submitShortcutFromString str =
 submitShortcutLabel : SubmitShortcut -> String
 submitShortcutLabel shortcut =
     case shortcut of
+        NoShortcut ->
+            "No Shortcut (Button Only)"
+
         EnterOnce ->
             "Press Enter Once"
 

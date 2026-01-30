@@ -347,6 +347,9 @@ viewInput actions model =
 
         placeholderText =
             case actions.submitShortcut of
+                NoShortcut ->
+                    "Type your message... (click Send button to submit, Esc to cancel)"
+
                 EnterOnce ->
                     "Type your message... (press Enter to send, Esc to cancel)"
 
@@ -424,6 +427,10 @@ enterKeyDecoder actions lastEnterTime isWaiting =
 
             else
                 case actions.submitShortcut of
+                    NoShortcut ->
+                        -- No keyboard shortcut, Enter always inserts newline
+                        Decode.fail "No shortcut mode - let all keys pass through"
+
                     EnterOnce ->
                         -- Enter submits, Shift+Enter or Alt+Enter inserts newline
                         if key == "Enter" then

@@ -25,17 +25,19 @@ Provider provider_from_string(const std::string& str) {
 
 std::string submit_shortcut_to_string(SubmitShortcut mode) {
     switch (mode) {
+        case SubmitShortcut::NoShortcut: return "no_shortcut";
         case SubmitShortcut::EnterOnce: return "enter_once";
         case SubmitShortcut::ShiftEnter: return "shift_enter";
         case SubmitShortcut::EnterTwice: return "enter_twice";
-        default: return "enter_once";
+        default: return "no_shortcut";
     }
 }
 
 SubmitShortcut submit_shortcut_from_string(const std::string& str) {
+    if (str == "enter_once") return SubmitShortcut::EnterOnce;
     if (str == "shift_enter") return SubmitShortcut::ShiftEnter;
     if (str == "enter_twice") return SubmitShortcut::EnterTwice;
-    return SubmitShortcut::ShiftEnter;  // Default
+    return SubmitShortcut::NoShortcut;  // Default
 }
 
 std::optional<Settings> load_settings() {
