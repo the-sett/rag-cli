@@ -302,12 +302,41 @@ viewMessageWithIndex actions msgIndex message =
 
 
 {-| Extract raw text from a list of ChatMarkBlocks.
+    Deduplicates consecutive blocks that share the same raw text
+    (which happens when multiple parsed blocks come from the same chunk).
 -}
 extractRawText : List ChatMarkBlock -> String
 extractRawText blocks =
     blocks
         |> List.map extractBlockText
+        |> deduplicateConsecutive
         |> String.join "\n"
+
+
+{-| Remove consecutive duplicate strings from a list.
+-}
+deduplicateConsecutive : List String -> List String
+deduplicateConsecutive strings =
+    case strings of
+        [] ->
+            []
+
+        first :: rest ->
+            first :: deduplicateConsecutiveHelper first rest
+
+
+deduplicateConsecutiveHelper : String -> List String -> List String
+deduplicateConsecutiveHelper prev strings =
+    case strings of
+        [] ->
+            []
+
+        current :: rest ->
+            if current == prev then
+                deduplicateConsecutiveHelper prev rest
+
+            else
+                current :: deduplicateConsecutiveHelper current rest
 
 
 extractBlockText : ChatMarkBlock -> String
