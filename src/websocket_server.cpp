@@ -5,6 +5,8 @@
 #include <ixwebsocket/IXWebSocketServer.h>
 #include <nlohmann/json.hpp>
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 namespace rag {
 
@@ -301,71 +303,125 @@ void WebSocketServer::process_query(void* conn_id, ix::WebSocket& ws, std::share
     std::string current_model = settings_ ? settings_->model : model_;
     std::string current_reasoning_effort = settings_ ? settings_->reasoning_effort : reasoning_effort_;
 
-    try {
-        StreamResult result = client_.stream_response_with_tools(
-            current_model,
-            session->get_api_window(),
-            vector_store_id_,
-            current_reasoning_effort,
-            session->get_openai_response_id(),
-            mcp_tools,
-            // on_text callback
-            [this, &ws, &full_response](const std::string& delta) {
-                full_response += delta;
-                send_json(ws, {{"type", "delta"}, {"content", delta}});
-            },
-            // on_tool_call callback - returns result string
-            [this, &ws](const std::string& call_id, const std::string& name, const nlohmann::json& args) -> std::string {
-                verbose_log("MCP", "Executing tool: " + name);
+    // Retry loop with exponential backoff
+    const int MAX_RETRIES = 10;
+    const int BASE_DELAY_MS = 1000;
+    const int MAX_DELAY_MS = 30000;
 
-                // Execute the tool and send UI command
-                if (name == TOOL_OPEN_SIDEBAR) {
-                    send_ui_command(ws, "open_sidebar", nlohmann::json::object());
-                    return "Sidebar opened successfully.";
-                } else if (name == TOOL_CLOSE_SIDEBAR) {
-                    send_ui_command(ws, "close_sidebar", nlohmann::json::object());
-                    return "Sidebar closed successfully.";
-                } else {
-                    verbose_err("MCP", "Unknown tool: " + name);
-                    return "Unknown tool: " + name;
+    for (int attempt = 0; attempt <= MAX_RETRIES; ++attempt) {
+        // Reset response for each attempt (clear any partial content from failed attempt)
+        full_response.clear();
+
+        try {
+            StreamResult result = client_.stream_response_with_tools(
+                current_model,
+                session->get_api_window(),
+                vector_store_id_,
+                current_reasoning_effort,
+                session->get_openai_response_id(),
+                mcp_tools,
+                // on_text callback
+                [this, &ws, &full_response](const std::string& delta) {
+                    full_response += delta;
+                    send_json(ws, {{"type", "delta"}, {"content", delta}});
+                },
+                // on_tool_call callback - returns result string
+                [this, &ws](const std::string& call_id, const std::string& name, const nlohmann::json& args) -> std::string {
+                    verbose_log("MCP", "Executing tool: " + name);
+
+                    // Execute the tool and send UI command
+                    if (name == TOOL_OPEN_SIDEBAR) {
+                        send_ui_command(ws, "open_sidebar", nlohmann::json::object());
+                        return "Sidebar opened successfully.";
+                    } else if (name == TOOL_CLOSE_SIDEBAR) {
+                        send_ui_command(ws, "close_sidebar", nlohmann::json::object());
+                        return "Sidebar closed successfully.";
+                    } else {
+                        verbose_err("MCP", "Unknown tool: " + name);
+                        return "Unknown tool: " + name;
+                    }
+                },
+                cancel_check
+            );
+
+            // Check if we were cancelled (empty response_id indicates cancellation)
+            if (result.response_id.empty() && cancel_check()) {
+                verbose_log("WS", "Query cancelled by user");
+                // Don't add incomplete response to conversation
+                send_json(ws, {{"type", "cancelled"}});
+                return;
+            }
+
+            // Success - clear any retry indicator in the UI
+            if (attempt > 0) {
+                send_json(ws, {{"type", "retry_cleared"}});
+            }
+
+            // Add assistant response to conversation
+            session->add_assistant_message(full_response);
+
+            // Store the response ID for conversation continuation
+            if (!result.response_id.empty()) {
+                session->set_openai_response_id(result.response_id);
+            }
+
+            // Check if we need to compact the conversation window
+            maybe_compact_chat_window(client_, *session, current_model, result.usage);
+
+            // Update settings with chat info (only if materialized)
+            if (session->is_materialized()) {
+                update_settings(session);
+            }
+
+            // Send done message with chat ID (will be empty if still pending)
+            nlohmann::json done_msg = {{"type", "done"}};
+            if (session->is_materialized()) {
+                done_msg["chat_id"] = session->get_chat_id();
+            }
+            send_json(ws, done_msg);
+            return;  // Success - exit retry loop
+
+        } catch (const std::exception& e) {
+            std::string error_msg = e.what();
+            verbose_err("WS", "Stream error (attempt " + std::to_string(attempt + 1) + "): " + error_msg);
+
+            // Check if cancelled during the attempt
+            if (cancel_check()) {
+                verbose_log("WS", "Query cancelled during retry");
+                send_json(ws, {{"type", "cancelled"}});
+                return;
+            }
+
+            // If max retries exhausted, send the error
+            if (attempt >= MAX_RETRIES) {
+                send_json(ws, {{"type", "error"}, {"message", error_msg}});
+                return;
+            }
+
+            // Calculate backoff delay with exponential increase
+            int delay_ms = std::min(BASE_DELAY_MS * (1 << attempt), MAX_DELAY_MS);
+
+            // Notify UI about the retry (clear any partial streaming content first)
+            send_json(ws, {{"type", "retry"},
+                           {"attempt", attempt + 1},
+                           {"max_retries", MAX_RETRIES},
+                           {"delay_seconds", delay_ms / 1000},
+                           {"message", error_msg}});
+
+            verbose_log("WS", "Retrying in " + std::to_string(delay_ms) + "ms (attempt " +
+                              std::to_string(attempt + 1) + "/" + std::to_string(MAX_RETRIES) + ")");
+
+            // Wait with backoff, checking for cancellation periodically
+            auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_ms);
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (cancel_check()) {
+                    verbose_log("WS", "Query cancelled during retry backoff");
+                    send_json(ws, {{"type", "cancelled"}});
+                    return;
                 }
-            },
-            cancel_check
-        );
-
-        // Check if we were cancelled (empty response_id indicates cancellation)
-        if (result.response_id.empty() && cancel_check()) {
-            verbose_log("WS", "Query cancelled by user");
-            // Don't add incomplete response to conversation
-            send_json(ws, {{"type", "cancelled"}});
-            return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
         }
-
-        // Add assistant response to conversation
-        session->add_assistant_message(full_response);
-
-        // Store the response ID for conversation continuation
-        if (!result.response_id.empty()) {
-            session->set_openai_response_id(result.response_id);
-        }
-
-        // Check if we need to compact the conversation window
-        maybe_compact_chat_window(client_, *session, current_model, result.usage);
-
-        // Update settings with chat info (only if materialized)
-        if (session->is_materialized()) {
-            update_settings(session);
-        }
-
-        // Send done message with chat ID (will be empty if still pending)
-        nlohmann::json done_msg = {{"type", "done"}};
-        if (session->is_materialized()) {
-            done_msg["chat_id"] = session->get_chat_id();
-        }
-        send_json(ws, done_msg);
-
-    } catch (const std::exception& e) {
-        send_json(ws, {{"type", "error"}, {"message", e.what()}});
     }
 }
 

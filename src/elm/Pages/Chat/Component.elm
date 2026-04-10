@@ -10,6 +10,8 @@ module Pages.Chat.Component exposing
     , receiveStreamDone
     , receiveStreamCancelled
     , receiveStreamError
+    , receiveStreamRetry
+    , receiveStreamRetryCleared
     , receiveHistoryMessage
     , scrollToBottom
     , setSidebarVisible
@@ -63,6 +65,7 @@ init chatId =
       , chatId = chatId
       , sidebarVisible = True
       , isDraggingOver = False
+      , retryState = Nothing
       }
     , Cmd.none
     )
@@ -108,6 +111,20 @@ receiveStreamCancelled =
 receiveStreamError : Protocol model msg -> String -> Model -> ( model, Cmd msg )
 receiveStreamError =
     Update.receiveStreamError
+
+
+{-| Handle retry notification from websocket.
+-}
+receiveStreamRetry : Protocol model msg -> Model.RetryInfo -> Model -> ( model, Cmd msg )
+receiveStreamRetry =
+    Update.receiveStreamRetry
+
+
+{-| Handle retry cleared notification from websocket.
+-}
+receiveStreamRetryCleared : Protocol model msg -> Model -> ( model, Cmd msg )
+receiveStreamRetryCleared =
+    Update.receiveStreamRetryCleared
 
 
 {-| Handle history message from websocket (for reconnecting to existing chats).

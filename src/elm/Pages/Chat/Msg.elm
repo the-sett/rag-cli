@@ -27,6 +27,8 @@ type Msg
     | StreamDone (Maybe String)  -- Optional chat ID from server
     | StreamCancelled
     | StreamError String
+    | StreamRetry { attempt : Int, maxRetries : Int, delaySeconds : Int, message : String }
+    | StreamRetryCleared
     | DragEnter
     | DragLeave
     | FilesDropped File (List File)

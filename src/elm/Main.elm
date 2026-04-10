@@ -629,6 +629,12 @@ handleServerMessage payload model =
                 ErrorMessage errorMsg ->
                     Chat.receiveStreamError (chatProtocol model) errorMsg model.chat
 
+                RetryMessage retryInfo ->
+                    Chat.receiveStreamRetry (chatProtocol model) retryInfo model.chat
+
+                RetryClearedMessage ->
+                    Chat.receiveStreamRetryCleared (chatProtocol model) model.chat
+
                 UiCommandMessage { command } ->
                     -- Handle UI commands from MCP tools
                     handleUiCommand command model
@@ -672,6 +678,8 @@ type ServerMessage
     | ReadyMessage (Maybe String)
     | HistoryMessage { role : String, content : String }
     | ErrorMessage String
+    | RetryMessage { attempt : Int, maxRetries : Int, delaySeconds : Int, message : String }
+    | RetryClearedMessage
     | UiCommandMessage { command : String }
     | ReindexMessage { added : Int, modified : Int, removed : Int }
 
@@ -702,6 +710,17 @@ serverMessageDecoder =
 
                 "error" ->
                     Decode.map ErrorMessage (Decode.field "message" Decode.string)
+
+                "retry" ->
+                    Decode.map4
+                        (\a m d msg -> RetryMessage { attempt = a, maxRetries = m, delaySeconds = d, message = msg })
+                        (Decode.field "attempt" Decode.int)
+                        (Decode.field "max_retries" Decode.int)
+                        (Decode.field "delay_seconds" Decode.int)
+                        (Decode.field "message" Decode.string)
+
+                "retry_cleared" ->
+                    Decode.succeed RetryClearedMessage
 
                 "ui_command" ->
                     Decode.map (\cmd -> UiCommandMessage { command = cmd })

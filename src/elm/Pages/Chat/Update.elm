@@ -5,6 +5,8 @@ module Pages.Chat.Update exposing
     , receiveStreamDone
     , receiveStreamCancelled
     , receiveStreamError
+    , receiveStreamRetry
+    , receiveStreamRetryCleared
     , receiveHistoryMessage
     , scrollToBottom
     )
@@ -15,7 +17,7 @@ module Pages.Chat.Update exposing
 import Browser.Dom as Dom
 import File
 import Markdown.ChatMarkBlock as ChatMarkBlock
-import Pages.Chat.Model exposing (ChatMessage, Model, ScrollEvent, TocEntry)
+import Pages.Chat.Model as Model exposing (ChatMessage, Model, ScrollEvent, TocEntry)
 import Pages.Chat.Msg exposing (Msg(..))
 import Process
 import Task
@@ -94,6 +96,12 @@ update protocol msg model =
         StreamError errorMsg ->
             addErrorMessage protocol errorMsg model
 
+        StreamRetry retryInfo ->
+            handleStreamRetry protocol retryInfo model
+
+        StreamRetryCleared ->
+            handleStreamRetryCleared protocol model
+
         DragEnter ->
             ( { model | isDraggingOver = True }, Cmd.none )
                 |> protocol.onUpdate
@@ -151,6 +159,20 @@ receiveStreamError protocol errorMsg model =
 receiveStreamCancelled : Protocol model msg -> Model -> ( model, Cmd msg )
 receiveStreamCancelled protocol model =
     handleStreamCancelled protocol model
+
+
+{-| Handle stream retry notification from websocket (called from Main).
+-}
+receiveStreamRetry : Protocol model msg -> Model.RetryInfo -> Model -> ( model, Cmd msg )
+receiveStreamRetry protocol retryInfo model =
+    handleStreamRetry protocol retryInfo model
+
+
+{-| Handle stream retry cleared notification from websocket (called from Main).
+-}
+receiveStreamRetryCleared : Protocol model msg -> Model -> ( model, Cmd msg )
+receiveStreamRetryCleared protocol model =
+    handleStreamRetryCleared protocol model
 
 
 {-| Handle history message from websocket (called from Main).
@@ -429,6 +451,7 @@ finalizeStreamingResponse protocol maybeChatId model =
                     , tocEntriesHistory = newTocEntriesHistory
                     , tocEntriesStreaming = []
                     , chatId = newChatId
+                    , retryState = Nothing
                 }
         in
         queryNewTocEntryPositions protocol newModel
@@ -447,7 +470,29 @@ addErrorMessage protocol errorMsg model =
         , streamState = ChatMarkBlock.initStreamState
         , isWaitingForResponse = False
         , tocEntriesStreaming = []
+        , retryState = Nothing
       }
+    , Cmd.none
+    )
+        |> protocol.onUpdate
+
+
+handleStreamRetry : Protocol model msg -> Model.RetryInfo -> Model -> ( model, Cmd msg )
+handleStreamRetry protocol retryInfo model =
+    -- Reset streaming state (clear partial content from failed attempt) and show retry indicator
+    ( { model
+        | streamState = ChatMarkBlock.initStreamState
+        , tocEntriesStreaming = []
+        , retryState = Just retryInfo
+      }
+    , Cmd.none
+    )
+        |> protocol.onUpdate
+
+
+handleStreamRetryCleared : Protocol model msg -> Model -> ( model, Cmd msg )
+handleStreamRetryCleared protocol model =
+    ( { model | retryState = Nothing }
     , Cmd.none
     )
         |> protocol.onUpdate

@@ -1131,6 +1131,34 @@ messageStyles =
         , Css.borderBottom3 (Css.px 5) Css.solid colorNegative
         , Css.fontFamilies fontStackMono
         ]
+    , Css.Global.class "message-retry"
+        [ Css.backgroundColor colorBackground
+        , Css.borderTop3 (Css.px 3) Css.solid colorWarning
+        , Css.borderBottom3 (Css.px 3) Css.solid colorWarning
+        ]
+    , Css.Global.class "retry-indicator"
+        [ Css.displayFlex
+        , Css.alignItems Css.center
+        , Css.flexWrap Css.wrap
+        , Css.property "gap" "0.5rem"
+        , Css.padding2 space2 space3
+        , Css.fontFamilies fontStackMono
+        , Css.fontSize (Css.rem 0.875)
+        ]
+    , Css.Global.class "retry-spinner"
+        [ Css.property "animation" "spin 1s linear infinite"
+        , Css.display Css.inlineBlock
+        , Css.fontSize (Css.rem 1.2)
+        ]
+    , Css.Global.class "retry-text"
+        [ Css.color colorWarning
+        , Css.fontWeight Css.bold
+        ]
+    , Css.Global.class "retry-error"
+        [ Css.color colorTextSecondary
+        , Css.fontSize (Css.rem 0.8)
+        , Css.width (Css.pct 100)
+        ]
     , Css.Global.class "message-content"
         [ Css.margin Css.zero
         , Css.property "word-wrap" "break-word"

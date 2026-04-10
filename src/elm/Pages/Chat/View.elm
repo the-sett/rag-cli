@@ -9,7 +9,7 @@ import Html.Styled.Attributes as HA
 import Html.Styled.Events as HE
 import Json.Decode as Decode
 import Markdown.ChatMarkBlock as ChatMarkBlock exposing (ChatMarkBlock(..), StreamState, renderBlocksWithCopy, renderBlocksWithIdsAndCopy)
-import Pages.Chat.Model exposing (ChatMessage, Model, TocEntry, scrollEventDecoder)
+import Pages.Chat.Model exposing (ChatMessage, Model, RetryInfo, TocEntry, scrollEventDecoder)
 import Pages.Chat.Msg exposing (Msg(..))
 import Settings exposing (SubmitShortcut(..))
 
@@ -185,9 +185,18 @@ viewMessages actions model =
         pendingText =
             ChatMarkBlock.getPending model.streamState
 
+        retryIndicator =
+            case model.retryState of
+                Just retryInfo ->
+                    [ viewRetryIndicator retryInfo ]
+
+                Nothing ->
+                    []
+
         streamingMessage =
             if model.isWaitingForResponse then
-                [ viewStreamingMessage actions (List.length model.messages) model.streamState pendingText ]
+                retryIndicator
+                    ++ [ viewStreamingMessage actions (List.length model.messages) model.streamState pendingText ]
 
             else
                 []
@@ -236,6 +245,36 @@ viewStreamingMessage actions msgIndex streamState pendingText =
         [ HS.div
             [ HA.class "message-content" ]
             (renderBlocksWithIdsAndCopy onCopy idPrefix completedBlocks pendingText)
+        ]
+
+
+viewRetryIndicator : RetryInfo -> Html msg
+viewRetryIndicator retryInfo =
+    HS.div
+        [ HA.class "message"
+        , HA.class "message-retry"
+        ]
+        [ HS.div
+            [ HA.class "retry-indicator" ]
+            [ HS.span
+                [ HA.class "retry-spinner" ]
+                [ HS.text "\u{21BB}" ]  -- Unicode clockwise arrow
+            , HS.span
+                [ HA.class "retry-text" ]
+                [ HS.text
+                    ("Retrying... (attempt "
+                        ++ String.fromInt retryInfo.attempt
+                        ++ "/"
+                        ++ String.fromInt retryInfo.maxRetries
+                        ++ ", waiting "
+                        ++ String.fromInt retryInfo.delaySeconds
+                        ++ "s)"
+                    )
+                ]
+            , HS.div
+                [ HA.class "retry-error" ]
+                [ HS.text retryInfo.message ]
+            ]
         ]
 
 

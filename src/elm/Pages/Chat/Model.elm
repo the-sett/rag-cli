@@ -1,6 +1,7 @@
 module Pages.Chat.Model exposing
     ( Model
     , ChatMessage
+    , RetryInfo
     , TocEntry
     , ScrollEvent
     , scrollEventDecoder
@@ -30,6 +31,17 @@ type alias Model =
     , chatId : Maybe String  -- Current chat ID (Nothing for new chats)
     , sidebarVisible : Bool  -- Whether the sidebar is visible (controlled by MCP)
     , isDraggingOver : Bool  -- Whether a file is being dragged over the input
+    , retryState : Maybe RetryInfo  -- Retry indicator when API errors occur
+    }
+
+
+{-| Information about an ongoing retry attempt.
+-}
+type alias RetryInfo =
+    { attempt : Int
+    , maxRetries : Int
+    , delaySeconds : Int
+    , message : String
     }
 
 
